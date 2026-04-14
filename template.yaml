@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Trading Opportunity Bot
+
+Parameters:
+  TelegramBotToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+  TelegramChatId:
+    Type: String
+    Default: ""
+  BinanceApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+  BinanceSecret:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [x86_64]
+    Timeout: 30
+    MemorySize: 128
+    Environment:
+      Variables:
+        CAPITAL_TOTAL: "1183.0"
+        RISK_PER_TRADE_PCT: "0.05"
+        MIN_RR_RATIO: "2.5"
+        MAX_SL_PCT: "0.02"
+        TRAILING_ACTIVATION: "1.0"
+        TRAILING_STEP_PCT: "0.005"
+        ENTRY_DRIFT_MAX_PCT: "0.003"
+        COOLDOWN_MINUTES: "45"
+        TELEGRAM_BOT_TOKEN: !Ref TelegramBotToken
+        TELEGRAM_CHAT_ID: !Ref TelegramChatId
+        BINANCE_API_KEY: !Ref BinanceApiKey
+        BINANCE_SECRET: !Ref BinanceSecret
+
+Resources:
+  ScannerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.lambdas.scanner.handler.handler
+      Timeout: 60
+      MemorySize: 256
+      Events:
+        ScannerSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+
+  WebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.lambdas.webhook.handler.handler
+      Timeout: 15
+
+  PositionMonitorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.lambdas.position_monitor.handler.handler
+      Timeout: 58
+      Events:
+        MonitorSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+
+  BinanceEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.lambdas.binance_events.handler.handler
+      Timeout: 15
+
+  KeepAliveFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.lambdas.keepalive.handler.handler
+      Timeout: 10
+      Events:
+        KeepAliveSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(30 minutes)

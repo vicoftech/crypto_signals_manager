@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# Lambda / local build (pip wheels + zip)
+build/
+*.zip
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
