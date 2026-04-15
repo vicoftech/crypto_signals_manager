@@ -4,6 +4,9 @@ import pandas as pd
 
 
 def enrich_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    if "open_time" in df.columns and "timestamp" not in df.columns:
+        df = df.copy()
+        df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
     close = df["close"]
     high = df["high"]
     low = df["low"]

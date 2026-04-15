@@ -45,12 +45,23 @@ class BaseStrategy(ABC):
 
 
 def simple_long_opportunity(
-    pair: str, strategy: str, timeframe: str, df: pd.DataFrame, ctx: MarketContext, sl_lookback: int = 3
+    pair: str,
+    strategy: str,
+    timeframe: str,
+    df: pd.DataFrame,
+    ctx: MarketContext,
+    sl_lookback: int = 3,
+    sl_override: float | None = None,
 ) -> Opportunity | None:
     if not ctx.tradeable:
         return None
     entry = float(df["close"].iloc[-1])
-    sl = float(df["low"].tail(sl_lookback).min())
+    if sl_override is not None:
+        sl = float(sl_override)
+        sl_type = "sl_override"
+    else:
+        sl = float(df["low"].tail(sl_lookback).min())
+        sl_type = f"low_{sl_lookback}_candles"
     risk = entry - sl
     if risk <= 0:
         return None
@@ -63,6 +74,6 @@ def simple_long_opportunity(
         sl_price=sl,
         tp1_price=entry + (risk * 1.5),
         tp2_price=entry + (risk * 3.0),
-        sl_type=f"low_{sl_lookback}_candles",
+        sl_type=sl_type,
         market_context=ctx,
     )

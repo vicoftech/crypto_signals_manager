@@ -38,7 +38,13 @@ class MarketContextEvaluator:
         ema21 = float(df["EMA_21"].iloc[-1])
         ema50 = float(df["EMA_50"].iloc[-1])
         close = float(df["close"].iloc[-1])
-        if ema21 > ema50 and close > ema21:
+        ema21_hace3 = float(df["EMA_21"].iloc[-4]) if len(df) >= 4 else ema21
+
+        tendencia_establecida = ema21 > ema50 and close > ema21
+        ema21_subiendo = ema21 > ema21_hace3
+        reversion_temprana = close > ema50 and ema21_subiendo and close > ema21
+
+        if tendencia_establecida or reversion_temprana:
             trend = "BULLISH"
         elif ema21 < ema50 and close < ema21:
             trend = "BEARISH"
@@ -51,7 +57,7 @@ class MarketContextEvaluator:
         volatility = "HIGH" if ratio > 1.3 else "MEDIUM" if ratio > 0.7 else "LOW"
 
         vol_avg = float(df["volume"].rolling(20).mean().iloc[-1])
-        volume_state = "ACTIVE" if float(df["volume"].iloc[-1]) > vol_avg * 1.1 else "QUIET"
+        volume_state = "ACTIVE" if float(df["volume"].iloc[-1]) > vol_avg * 0.9 else "QUIET"
 
         atr_viable = (atr_current * 0.5) <= settings.max_sl_pct
         bb_width = (df["BBU_20_2.0"] - df["BBL_20_2.0"]) / df["BBM_20_2.0"]
