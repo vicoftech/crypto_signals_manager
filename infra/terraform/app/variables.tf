@@ -31,3 +31,9 @@ variable "artifact_key" {
   type    = string
   default = "lambda/lambda_bundle.zip"
 }
+
+variable "audit_firehose_prefix" {
+  type        = string
+  default     = "trading-bot"
+  description = "Prefijo de nombres de Kinesis Firehose (debe coincidir con project_name en infra/audit)."
+}

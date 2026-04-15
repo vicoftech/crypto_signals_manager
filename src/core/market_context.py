@@ -34,7 +34,7 @@ def _build_reason(
 
 class MarketContextEvaluator:
     @staticmethod
-    def evaluate(df: pd.DataFrame, pair: str) -> MarketContext:
+    def evaluate(df: pd.DataFrame, pair: str, scan_id: str | None = None) -> MarketContext:
         ema21 = float(df["EMA_21"].iloc[-1])
         ema50 = float(df["EMA_50"].iloc[-1])
         close = float(df["close"].iloc[-1])
@@ -70,7 +70,7 @@ class MarketContextEvaluator:
             and atr_viable
             and not bb_squeeze
         )
-        return MarketContext(
+        ctx = MarketContext(
             pair=pair,
             trend=trend,
             volatility=volatility,
@@ -80,3 +80,28 @@ class MarketContextEvaluator:
             tradeable=tradeable,
             reason=_build_reason(trend, volatility, volume_state, atr_viable, bb_squeeze),
         )
+        if scan_id:
+            vol_ratio = (float(df["volume"].iloc[-1]) / vol_avg) if vol_avg else 0.0
+            bb_width_s = (df["BBU_20_2.0"] - df["BBL_20_2.0"]) / df["BBM_20_2.0"]
+            bb_w = float(bb_width_s.iloc[-1])
+            bb_w_avg = float(bb_width_s.rolling(20).mean().iloc[-1])
+            from src.core.audit import log_market_context
+
+            log_market_context(
+                scan_id,
+                ctx,
+                {
+                    "ema21": ema21,
+                    "ema50": ema50,
+                    "close": close,
+                    "atr_current": atr_current,
+                    "atr_avg": atr_avg,
+                    "atr_ratio": ratio,
+                    "vol_actual": float(df["volume"].iloc[-1]),
+                    "vol_avg": vol_avg,
+                    "vol_ratio": vol_ratio,
+                    "bb_width": bb_w,
+                    "bb_width_avg": bb_w_avg,
+                },
+            )
+        return ctx

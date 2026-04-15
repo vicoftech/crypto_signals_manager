@@ -87,6 +87,16 @@ resource "aws_iam_role_policy" "bot_inline" {
         ]
         Effect   = "Allow"
         Resource = "*"
+      },
+      {
+        Action = [
+          "firehose:PutRecord",
+          "firehose:PutRecordBatch"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:firehose:${var.aws_region}:${data.aws_caller_identity.current.account_id}:deliverystream/${var.audit_firehose_prefix}-*"
+        ]
       }
     ]
   })
@@ -184,6 +194,14 @@ resource "aws_ssm_parameter" "telegram_chat_id" {
 }
 
 locals {
+  audit_firehose = {
+    market_context      = "${var.audit_firehose_prefix}-market-context"
+    strategy_executions = "${var.audit_firehose_prefix}-strategy-executions"
+    opportunities       = "${var.audit_firehose_prefix}-opportunities"
+    scan_cycles         = "${var.audit_firehose_prefix}-scan-cycles"
+    trades              = "${var.audit_firehose_prefix}-trades"
+  }
+
   lambda_env = {
     CAPITAL_TOTAL        = "1183.0"
     RISK_PER_TRADE_PCT   = "0.05"
@@ -200,6 +218,11 @@ locals {
     PAIRS_TABLE_NAME     = aws_dynamodb_table.pairs.name
     CONFIG_TABLE_NAME    = aws_dynamodb_table.config.name
     TRADES_TABLE_NAME    = aws_dynamodb_table.trades.name
+    AUDIT_FIREHOSE_MARKET_CONTEXT      = local.audit_firehose.market_context
+    AUDIT_FIREHOSE_STRATEGY_EXECUTIONS = local.audit_firehose.strategy_executions
+    AUDIT_FIREHOSE_OPPORTUNITIES       = local.audit_firehose.opportunities
+    AUDIT_FIREHOSE_SCAN_CYCLES         = local.audit_firehose.scan_cycles
+    AUDIT_FIREHOSE_TRADES              = local.audit_firehose.trades
   }
 }
 

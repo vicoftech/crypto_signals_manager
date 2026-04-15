@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+import uuid
 
 from src.config import settings
 from src.core.binance_client import BinanceClient
@@ -13,6 +15,7 @@ from src.core.market_context import MarketContextEvaluator
 from src.core.pairs_manager import PairsManager
 from src.core.state import CooldownState
 from src.core.telegram_client import TelegramClient
+from src.core.audit import log_opportunity, log_scan_cycle, log_strategy_execution
 from src.strategies import STRATEGY_REGISTRY
 
 logger = logging.getLogger()
@@ -31,6 +34,9 @@ def handler(event, context):
         telegram.send_trade_update("Scanner pausado: no se ejecuto busqueda de oportunidades.")
         return {"ok": True, "sent": 0, "paused": True}
 
+    scan_id = str(uuid.uuid4())
+    t_start = time.perf_counter()
+
     total_pairs = 0
     tradeable_pairs = 0
     context_evals = 0
@@ -44,7 +50,7 @@ def handler(event, context):
         total_pairs += 1
         try:
             df = enrich_dataframe(binance.get_klines_df(pair_cfg.pair, "30m", 150))
-            ctx = MarketContextEvaluator.evaluate(df, pair_cfg.pair)
+            ctx = MarketContextEvaluator.evaluate(df, pair_cfg.pair, scan_id=scan_id)
             context_evals += 1
             if not ctx.tradeable:
                 strategies_skipped_no_tradeable += len(pair_cfg.strategies)
@@ -61,6 +67,7 @@ def handler(event, context):
                     continue
                 opp = strategy.analyze(df, pair_cfg.pair, ctx)
                 if not opp:
+                    log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "FALLO")
                     continue
                 current_price = binance.get_price(pair_cfg.pair)
                 if needs_drift_recalc(opp.entry_price, current_price):
@@ -68,8 +75,18 @@ def handler(event, context):
                 op_data = with_risk(opp, current_price)
                 if not passes_quality_filters(op_data):
                     filtered_out += 1
+                    log_strategy_execution(
+                        scan_id,
+                        pair_cfg.pair,
+                        strategy_name,
+                        "FALLO",
+                        condicion_falla="filtros_calidad",
+                        valor_condicion=f"rr={op_data.get('rr_ratio')} sl_pct={op_data.get('sl_pct')}",
+                    )
                     continue
                 telegram.send_opportunity(op_data)
+                log_opportunity(scan_id, op_data)
+                log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
                 cooldown.mark(pair_cfg.pair, strategy_name)
                 sent += 1
         except Exception:
@@ -128,4 +145,25 @@ def handler(event, context):
         config_store.set_number("scanner_agg_oportunidades", agg_sent)
         config_store.set_number("scanner_agg_filtradas", agg_filtered)
         config_store.set_number("scanner_agg_errores", agg_errors)
+
+    dur_ms = int((time.perf_counter() - t_start) * 1000)
+    log_scan_cycle(
+        scan_id,
+        {
+            "pares_evaluados": total_pairs,
+            "pares_operables": tradeable_pairs,
+            "descartados_trend": 0,
+            "descartados_volume": 0,
+            "descartados_volatility": 0,
+            "descartados_atr": 0,
+            "descartados_squeeze": 0,
+            "oportunidades_brutas": sent + filtered_out,
+            "descartadas_rr": filtered_out,
+            "descartadas_sl_pct": 0,
+            "descartadas_cooldown": 0,
+            "enviadas_telegram": sent,
+            "errores": errors,
+        },
+        dur_ms,
+    )
     return {"ok": True, "sent": sent, "pairs": total_pairs, "errors": errors}

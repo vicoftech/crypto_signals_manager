@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 from src.core.binance_client import BinanceClient
@@ -8,11 +9,13 @@ from src.core.simulator import evaluate_sim_trade
 from src.core.telegram_client import TelegramClient
 from src.core.market_session import format_market_session_from_iso
 from src.core.trades_manager import TradesManager
+from src.core.audit import log_trade_from_row
 
 trades = TradesManager()
 binance = BinanceClient()
 telegram = TelegramClient()
 config_store = ConfigStore()
+logger = logging.getLogger()
 
 
 def handler(event, context):
@@ -30,6 +33,10 @@ def handler(event, context):
                     str(closed.get("started_at", trade.get("started_at", "")))
                 )
                 capital = config_store.get_capital(1183.0)
+                try:
+                    log_trade_from_row(closed)
+                except Exception:
+                    logger.warning("audit log_trade_from_row failed", exc_info=True)
                 telegram.send_trade_update(
                     (
                         f"🔔 [SIM] Operacion cerrada\n"
