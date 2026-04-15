@@ -5,7 +5,7 @@ import os
 
 import requests
 
-from src.config import settings
+from src.config import binance_credentials_configured, settings
 from src.core.config_store import ConfigStore
 from src.core.pairs_manager import PairsManager
 from src.core.market_session import format_market_session_from_iso
@@ -200,6 +200,12 @@ def _handle_callback(callback_query: dict) -> str:
 
     if action == "IGNORE":
         return f"Ignorada señal {pair} ({strategy})"
+
+    if action == "ENTER" and not binance_credentials_configured():
+        return (
+            "Modo REAL no disponible: faltan BINANCE_API_KEY y BINANCE_SECRET en el despliegue. "
+            "Usa SIMULAR o configura las keys y redespliega."
+        )
 
     trades = TradesManager()
     mode = "REAL" if action == "ENTER" else "SIM"

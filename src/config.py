@@ -4,6 +4,13 @@ import os
 from dataclasses import dataclass
 
 
+def binance_credentials_configured() -> bool:
+    """REAL mode requires signed Binance API access (listenKey, user stream)."""
+    key = (os.getenv("BINANCE_API_KEY") or "").strip()
+    secret = (os.getenv("BINANCE_SECRET") or "").strip()
+    return bool(key and secret)
+
+
 @dataclass(frozen=True)
 class Settings:
     capital_total: float = float(os.getenv("CAPITAL_TOTAL", "1183.0"))

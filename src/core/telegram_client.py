@@ -5,6 +5,8 @@ import os
 
 import requests
 
+from src.config import binance_credentials_configured
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,6 +29,7 @@ class TelegramClient:
         ).raise_for_status()
 
     def send_opportunity(self, opp: dict) -> None:
+        real_ok = binance_credentials_configured()
         text = (
             f"🎯 Oportunidad detectada\n"
             f"{opp['pair']} | {opp['strategy']}\n"
@@ -36,16 +39,19 @@ class TelegramClient:
             f"TP2: {opp['tp2_price']:.4f}\n"
             f"R/R: {opp['rr_ratio']:.2f}"
         )
+        if not real_ok:
+            text += "\n\n⚠️ Modo REAL deshabilitado: configura BINANCE_API_KEY y BINANCE_SECRET para registrar órdenes reales y cierre automático vía Binance."
         callback_base = f"{opp['pair']}|{opp['strategy']}|{opp['entry_actual_price']:.6f}"
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "📈 ENTRAR", "callback_data": f"ENTER|{callback_base}"},
-                    {"text": "🎮 SIMULAR", "callback_data": f"SIM|{callback_base}"},
-                    {"text": "❌ IGNORAR", "callback_data": f"IGNORE|{callback_base}"},
-                ]
+        row = []
+        if real_ok:
+            row.append({"text": "📈 ENTRAR", "callback_data": f"ENTER|{callback_base}"})
+        row.extend(
+            [
+                {"text": "🎮 SIMULAR", "callback_data": f"SIM|{callback_base}"},
+                {"text": "❌ IGNORAR", "callback_data": f"IGNORE|{callback_base}"},
             ]
-        }
+        )
+        keyboard = {"inline_keyboard": [row]}
         self._send(text, keyboard)
         logger.info(
             "OPPORTUNITY sent %s %s rr=%.2f",
