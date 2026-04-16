@@ -85,16 +85,16 @@ class TradesManager:
             commission = size * 0.002
             net_pnl = gross_pnl - commission
         risk_usd = float(trade.get("risk_usd", 0) or 0)
-        # Hard cap: la perdida neta no puede superar el riesgo definido
-        if risk_usd > 0 and net_pnl < -risk_usd:
+        # Hard cap spot: la pérdida neta no puede superar el monto invertido
+        if size > 0 and net_pnl < -size:
             logger.error(
-                "[CAPITAL] Pérdida %.2f supera riesgo %.2f en %s. "
-                "Limitando a -risk_usd.",
+                "[CAPITAL] Pérdida %.2f supera monto invertido %.2f en %s. "
+                "Limitando a -position_size_usd.",
                 net_pnl,
-                risk_usd,
+                size,
                 trade.get("pair"),
             )
-            net_pnl = -risk_usd
+            net_pnl = -size
             # Recalcular P&L bruto aproximado manteniendo comisiones, solo para consistencia
             gross_pnl = net_pnl + commission
         r_mult = (net_pnl / risk_usd) if risk_usd > 0 else 0.0

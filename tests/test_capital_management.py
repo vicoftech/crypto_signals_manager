@@ -28,7 +28,7 @@ def test_capital_snapshot_has_expected_keys_and_relationships():
     assert snap["drawdown_actual"] >= 0.0
 
 
-def test_close_trade_never_loses_more_than_risk(monkeypatch):
+def test_close_trade_never_loses_more_than_position_size(monkeypatch):
     # For in-memory mode (no Dynamo)
     monkeypatch.delenv("TRADES_TABLE_NAME", raising=False)
     monkeypatch.delenv("CONFIG_TABLE_NAME", raising=False)
@@ -49,7 +49,7 @@ def test_close_trade_never_loses_more_than_risk(monkeypatch):
     tm.close_trade(trade_id, "SL", exit_price=90.0)
     closed = tm.get_trade(trade_id)
     assert closed is not None
-    # La pérdida neta está acotada a -risk_usd
-    assert float(closed.get("net_pnl_usd")) >= -50.0 - 1e-6
+    # La pérdida neta está acotada a -position_size_usd (modelo spot)
+    assert float(closed.get("net_pnl_usd")) >= -1000.0 - 1e-6
 
 

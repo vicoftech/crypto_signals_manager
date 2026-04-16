@@ -251,7 +251,7 @@ resource "aws_lambda_function" "scanner" {
   s3_bucket        = var.artifact_bucket
   s3_key           = aws_s3_object.lambda_bundle.key
   source_code_hash = filebase64sha256(var.lambda_zip_path)
-  timeout          = 60
+  timeout          = 120
   memory_size      = 256
   environment { variables = local.lambda_env }
 }

@@ -36,7 +36,7 @@ def get_capital_snapshot() -> CapitalSnapshot:
     - capital_inicial: valor fijo configurado (fallback a settings.capital_total)
     - capital_total: capital actual acumulado (ConfigTable.capital_total)
     - pnl_cerrado: capital_total - capital_inicial
-    - capital_bloqueado: suma de risk_usd de trades SIM abiertos
+    - capital_bloqueado: suma de position_size_usd de trades SIM abiertos
     - capital_disponible: capital_total - capital_bloqueado
     """
     config = ConfigStore()
@@ -49,7 +49,7 @@ def get_capital_snapshot() -> CapitalSnapshot:
     pnl_cerrado = capital_total - capital_inicial
 
     abiertos = trades.list_open(mode="SIM")
-    capital_bloqueado = sum(float(t.get("risk_usd", 0) or 0) for t in abiertos)
+    capital_bloqueado = sum(float(t.get("position_size_usd", 0) or 0) for t in abiertos)
     capital_disponible = capital_total - capital_bloqueado
 
     drawdown_actual = 0.0

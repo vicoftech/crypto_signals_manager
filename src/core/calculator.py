@@ -13,7 +13,9 @@ class InsufficientCapitalError(Exception):
 
 def with_risk(op: Opportunity, entry_actual_price: float) -> dict:
     """
-    Calcula tamaño de posición y riesgo usando el capital ACTUAL, no el inicial estático.
+    MODELO SPOT DIRECTO:
+    - position_size_usd = capital_total * risk_pct  (monto invertido)
+    - risk_usd = position_size_usd * sl_pct          (pérdida esperada al SL)
     """
     sl_pct = (entry_actual_price - op.sl_price) / entry_actual_price
     if sl_pct <= 0:
@@ -28,18 +30,18 @@ def with_risk(op: Opportunity, entry_actual_price: float) -> dict:
             f"Capital disponible: ${capital_disponible:.2f}. No se puede abrir nueva posicion."
         )
 
-    # Riesgo teórico sobre capital total
-    risk_usd = capital_total * settings.risk_per_trade_pct
-    # Nunca arriesgar más del capital disponible
-    if risk_usd > capital_disponible:
-        risk_usd = capital_disponible
-
-    if risk_usd <= 0:
+    amount_to_invest = capital_total * settings.risk_per_trade_pct
+    if amount_to_invest > capital_disponible:
+        raise InsufficientCapitalError(
+            f"Capital insuficiente. disponible=${capital_disponible:.2f} requerido=${amount_to_invest:.2f}"
+        )
+    if amount_to_invest <= 0:
         raise InsufficientCapitalError(
             f"Capital disponible insuficiente para riesgo minimo. disponible=${capital_disponible:.2f}"
         )
 
-    position_size_usd = risk_usd / sl_pct
+    position_size_usd = amount_to_invest
+    risk_usd = amount_to_invest * sl_pct
     rr_ratio = (op.tp2_price - entry_actual_price) / (entry_actual_price - op.sl_price)
     data = asdict(op)
     data.update(
