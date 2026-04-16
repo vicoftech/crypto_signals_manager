@@ -6,6 +6,8 @@ import os
 import requests
 
 from src.config import binance_credentials_configured, settings
+from src.core.auto_sim_utils import calcular_pnl_circunstancial
+from src.core.binance_client import BinanceClient
 from src.core.config_store import ConfigStore
 from src.core.pairs_manager import PairsManager
 from src.core.market_session import format_market_session_from_iso
@@ -24,7 +26,10 @@ COMMANDS_HELP = {
     "/pausarpar <PAR>": "Pausa un par puntual.",
     "/activarpar <PAR>": "Reactiva un par puntual.",
     "/estrategias <PAR>": "Muestra estrategias habilitadas para el par.",
-    "/simular": "Lista simulaciones abiertas.",
+    "/simular": "Posiciones SIM abiertas con P&L circunstancial.",
+    "/simconfig <PAR> <manual|auto|disabled>": "Modo de simulacion por par.",
+    "/simstatus": "Modo y stats de sim por par.",
+    "/simstats <PAR>": "Stats de simulacion de un par.",
     "/confirmado <PAR>": "Cierra operacion REAL abierta del par como MANUAL.",
     "/historial": "Ultimas 20 operaciones cerradas con P&L.",
     "/resumen": "Resumen general de operaciones (abiertas/cerradas/modo).",
@@ -108,14 +113,91 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
             return "Par no encontrado"
         return f"Estrategias {p.pair}\n" + "\n".join(f"- {s}" for s in p.strategies)
     if cmd == "/simular":
-        sims = trades.list_open(mode="SIM")
+        sims = trades.get_all_open_trades()
         if not sims:
-            return "No hay simulaciones abiertas"
-        lines = [
-            f"{t.get('pair')} | {t.get('strategy')} | entry={float(t.get('entry_price', 0)):.4f} | id={t.get('trade_id')}"
-            for t in sims[:20]
-        ]
-        return "Simulaciones abiertas\n" + "\n".join(lines)
+            return "No hay posiciones abiertas en este momento."
+        bc = BinanceClient()
+        lines_out = []
+        total_pnl = 0.0
+        total_risk = 0.0
+        for i, t in enumerate(sims[:20], start=1):
+            pair = str(t.get("pair", ""))
+            px = bc.get_price(pair)
+            ent = float(t.get("entry_price", 0) or 0)
+            size = float(t.get("position_size_usd", 100) or 100)
+            comm_in = float(t.get("entry_commission_usd", size * 0.001) or 0)
+            pu, pp = calcular_pnl_circunstancial(ent, px, size, comm_in)
+            total_pnl += pu
+            total_risk += float(t.get("risk_usd", 0) or 0)
+            auto = "🤖 AUTO" if str(t.get("sim_source", "")).startswith("auto") else "👤 MANUAL"
+            lines_out.append(
+                f"{i}) {pair}  {auto}  |  {t.get('strategy')}\n"
+                f"   Entrada: {ent:.4f}  |  Ahora: {px:.4f}\n"
+                f"   P&L:  {pu:+.2f} USD  ({pp:+.2f}%)"
+            )
+        pct_tot = (total_pnl / sum(float(x.get("position_size_usd", 100) or 100) for x in sims)) * 100 if sims else 0
+        tail = f"\n─────────────────\n💼 P&L total abierto (estim.): {total_pnl:+.2f} USD (~{pct_tot:+.2f}% pond.)\n"
+        tail += f"Riesgo expuesto (sum risk_usd): {total_risk:.2f} USD"
+        return "📊 POSICIONES ABIERTAS (" + str(len(sims)) + ")\n\n" + "\n\n".join(lines_out) + tail
+    if cmd == "/simconfig" and len(parts) >= 3:
+        par = parts[1].upper().strip()
+        mode = parts[2].lower().strip()
+        if mode not in ("manual", "auto", "disabled"):
+            return "Modo invalido. Use: manual | auto | disabled"
+        ok = pairs.set_sim_mode(par, mode)
+        if not ok:
+            return "Par no encontrado"
+        if mode == "auto":
+            return f"✅ {par} en modo AUTO-SIM. Todas las senales se simularan automaticamente."
+        if mode == "manual":
+            return f"✅ {par} en modo MANUAL. Recibiras senales con botones."
+        return f"✅ {par} en modo DISABLED. Solo notificaciones sin simulacion."
+    if cmd == "/simstatus":
+        rows = pairs.get_all_pairs()
+        if not rows:
+            return "Sin pares"
+        lines = ["📊 ESTADO DE SIMULACION\n"]
+        total_t = 0
+        total_w = 0
+        total_pnl = 0.0
+        for p in rows:
+            sm = getattr(p, "sim_mode", "manual")
+            icon = "🤖 AUTO" if sm == "auto" else ("⛔ OFF" if sm == "disabled" else "👤 MANUAL")
+            st = p.sim_stats or {}
+            ts = int(st.get("total_sim", 0) or 0)
+            gw = int(st.get("ganadoras", 0) or 0)
+            pnl = float(st.get("pnl_total_usd", 0) or 0)
+            wr = (100 * gw / ts) if ts else 0.0
+            rav = float(st.get("r_multiple_avg", 0) or 0)
+            total_t += ts
+            total_w += gw
+            total_pnl += pnl
+            lines.append(
+                f"{p.pair}  {icon}  trades={ts}  win={wr:.0f}%  Ravg={rav:+.1f}  P&L={pnl:+.0f}"
+            )
+        wt = (100 * total_w / total_t) if total_t else 0.0
+        lines.append(f"\nTotal SIM acumulado (stats): {total_t} trades | win ~{wt:.0f}% | P&L {total_pnl:+.0f}")
+        return "\n".join(lines)
+    if cmd == "/simstats" and len(parts) >= 2:
+        p = pairs.get_pair(parts[1])
+        if not p:
+            return "Par no encontrado"
+        st = p.sim_stats or {}
+        ts = int(st.get("total_sim", 0) or 0)
+        gw = int(st.get("ganadoras", 0) or 0)
+        pl = int(st.get("perdedoras", 0) or 0)
+        pnl = float(st.get("pnl_total_usd", 0) or 0)
+        rav = float(st.get("r_multiple_avg", 0) or 0)
+        wr = (100 * gw / ts) if ts else 0.0
+        return (
+            f"📈 ESTADISTICAS {p.pair}\n"
+            f"Modo: {getattr(p, 'sim_mode', 'manual')}\n"
+            f"Total trades (sim_stats): {ts}\n"
+            f"Ganadoras: {gw}  Perdedoras: {pl}  Win%: {wr:.0f}%\n"
+            f"R multiple avg: {rav:+.2f}\n"
+            f"P&L acumulado (stats): {pnl:+.2f} USD\n"
+            f"Objetivo auto-trade: {100 - ts} trades hasta minimo 100 (si aplica)"
+        )
     if cmd == "/confirmado" and len(parts) >= 2:
         trade = trades.find_open_real_by_pair(parts[1])
         if not trade:
@@ -213,6 +295,7 @@ def _handle_callback(callback_query: dict) -> str:
     sl_price = entry_price * 0.99
     tp1_price = entry_price * 1.01
     tp2_price = entry_price * 1.02
+    size = 100.0
     trade_id = trades.open_trade(
         {
             "pair": pair,
@@ -221,10 +304,15 @@ def _handle_callback(callback_query: dict) -> str:
             "sl_price": sl_price,
             "tp1_price": tp1_price,
             "tp2_price": tp2_price,
-            "position_size_usd": 100.0,
+            "position_size_usd": size,
+            "risk_usd": settings.capital_total * settings.risk_per_trade_pct,
+            "entry_commission_usd": size * 0.001,
+            "sim_source": "telegram_callback",
             "tp1_hit": False,
             "trailing_activated": False,
             "timeframe": "30m",
+            "max_favorable_excursion": entry_price,
+            "max_adverse_excursion": entry_price,
         },
         mode=mode,
     )

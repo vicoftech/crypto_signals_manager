@@ -12,9 +12,15 @@ from src.core.config_store import ConfigStore
 from src.core.filters import needs_drift_recalc, passes_quality_filters
 from src.core.indicators import enrich_dataframe
 from src.core.market_context import MarketContextEvaluator
+from src.core.auto_sim_utils import (
+    apply_slippage_to_op_data,
+    is_signal_still_valid,
+    trade_payload_from_op_data,
+)
 from src.core.pairs_manager import PairsManager
 from src.core.state import CooldownState
-from src.core.telegram_client import TelegramClient
+from src.core.telegram_client import TelegramClient, format_sim_progress_message
+from src.core.trades_manager import TradesManager
 from src.core.audit import log_opportunity, log_scan_cycle, log_strategy_execution
 from src.strategies import STRATEGY_REGISTRY
 
@@ -23,6 +29,7 @@ logger.setLevel(logging.INFO)
 
 binance = BinanceClient(os.getenv("BINANCE_API_KEY"), os.getenv("BINANCE_SECRET"))
 pairs = PairsManager()
+trades = TradesManager()
 cooldown = CooldownState()
 telegram = TelegramClient()
 config_store = ConfigStore()
@@ -84,11 +91,41 @@ def handler(event, context):
                         valor_condicion=f"rr={op_data.get('rr_ratio')} sl_pct={op_data.get('sl_pct')}",
                     )
                     continue
-                telegram.send_opportunity(op_data)
-                log_opportunity(scan_id, op_data)
-                log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
-                cooldown.mark(pair_cfg.pair, strategy_name)
-                sent += 1
+
+                sim_mode = getattr(pair_cfg, "sim_mode", "manual")
+                if sim_mode == "auto":
+                    signal_px = float(op_data["entry_actual_price"])
+                    op_adj, _slip = apply_slippage_to_op_data(op_data, pair_cfg.pair, "auto")
+                    cur_px = binance.get_price(pair_cfg.pair)
+                    if not is_signal_still_valid(signal_px, cur_px):
+                        log_strategy_execution(
+                            scan_id,
+                            pair_cfg.pair,
+                            strategy_name,
+                            "FALLO",
+                            condicion_falla="drift_entrada",
+                            valor_condicion=f"signal={signal_px} current={cur_px}",
+                        )
+                        continue
+                    payload = trade_payload_from_op_data(op_adj, "auto_scanner")
+                    trades.open_trade(payload, "SIM")
+                    telegram.send_auto_sim_opened(op_adj)
+                    log_opportunity(scan_id, op_adj)
+                    log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
+                    cooldown.mark(pair_cfg.pair, strategy_name)
+                    sent += 1
+                elif sim_mode == "disabled":
+                    telegram.send_opportunity_notify_only(op_data)
+                    log_opportunity(scan_id, op_data)
+                    log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
+                    cooldown.mark(pair_cfg.pair, strategy_name)
+                    sent += 1
+                else:
+                    telegram.send_opportunity(op_data)
+                    log_opportunity(scan_id, op_data)
+                    log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
+                    cooldown.mark(pair_cfg.pair, strategy_name)
+                    sent += 1
         except Exception:
             errors += 1
             logger.exception("scanner error on %s", pair_cfg.pair)
@@ -114,6 +151,23 @@ def handler(event, context):
     agg_errors += errors
 
     if batch_count >= 3:
+        open_sims = trades.get_all_open_trades()
+        if open_sims:
+            prog_lines: list[str] = []
+            for t in open_sims:
+                try:
+                    px = binance.get_price(str(t.get("pair", "")))
+                    prog_lines.append(format_sim_progress_message(t, float(px)))
+                except Exception:
+                    logger.exception("format sim progress failed for %s", t.get("pair"))
+            pos_section = (
+                "\n\n────────\n"
+                "📌 POSICIONES SIM (check con este resumen / ~15 min)\n\n"
+                + "\n\n".join(prog_lines)
+            )
+        else:
+            pos_section = "\n\n📌 Posiciones SIM abiertas: ninguna."
+
         summary = (
             "Resumen scanner (ultimos 3 escaneos)\n"
             f"- pares_activos: {agg_pairs}\n"
@@ -124,7 +178,7 @@ def handler(event, context):
             f"- oportunidades_enviadas: {agg_sent}\n"
             f"- filtradas_calidad: {agg_filtered}\n"
             f"- errores: {agg_errors}"
-        )
+        ) + pos_section
         telegram.send_trade_update(summary)
         config_store.set_number("scanner_batch_count", 0)
         config_store.set_number("scanner_agg_pairs_activos", 0)

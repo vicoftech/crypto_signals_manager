@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -8,6 +9,8 @@ from uuid import uuid4
 import boto3
 
 from src.core.market_session import format_market_session
+
+logger = logging.getLogger(__name__)
 
 
 class TradesManager:
@@ -72,8 +75,17 @@ class TradesManager:
         size = float(trade.get("position_size_usd", 100.0) or 100.0)
         pnl_pct = ((exit_price - entry) / entry) if entry > 0 else 0.0
         gross_pnl = size * pnl_pct
-        commission = size * 0.002
-        net_pnl = gross_pnl - commission
+        entry_comm = trade.get("entry_commission_usd")
+        if entry_comm is not None and float(entry_comm) >= 0:
+            entry_comm_f = float(entry_comm)
+            exit_comm = size * 0.001
+            commission = entry_comm_f + exit_comm
+            net_pnl = gross_pnl - commission
+        else:
+            commission = size * 0.002
+            net_pnl = gross_pnl - commission
+        risk_usd = float(trade.get("risk_usd", 0) or 0)
+        r_mult = (net_pnl / risk_usd) if risk_usd > 0 else 0.0
         reason_text = _close_reason_to_text(close_reason)
         self._trades[trade_id]["status"] = "CLOSED"
         self._trades[trade_id]["close_reason"] = close_reason
@@ -82,12 +94,13 @@ class TradesManager:
         self._trades[trade_id]["gross_pnl_usd"] = gross_pnl
         self._trades[trade_id]["commission_usd"] = commission
         self._trades[trade_id]["net_pnl_usd"] = net_pnl
+        self._trades[trade_id]["rr_ratio"] = r_mult
         self._trades[trade_id]["ended_at"] = datetime.now(timezone.utc).isoformat()
         self._apply_net_pnl_to_capital(net_pnl)
         if self.table:
             self.table.update_item(
                 Key={"trade_id": trade_id},
-                UpdateExpression="SET #s=:s, close_reason=:r, close_reason_text=:rt, exit_price=:e, ended_at=:t, gross_pnl_usd=:g, commission_usd=:c, net_pnl_usd=:n",
+                UpdateExpression="SET #s=:s, close_reason=:r, close_reason_text=:rt, exit_price=:e, ended_at=:t, gross_pnl_usd=:g, commission_usd=:c, net_pnl_usd=:n, rr_ratio=:rr",
                 ExpressionAttributeNames={"#s": "status"},
                 ExpressionAttributeValues={
                     ":s": "CLOSED",
@@ -98,8 +111,20 @@ class TradesManager:
                     ":g": _to_dynamodb_types(gross_pnl),
                     ":c": _to_dynamodb_types(commission),
                     ":n": _to_dynamodb_types(net_pnl),
+                    ":rr": _to_dynamodb_types(r_mult),
                 },
             )
+        if str(trade.get("mode")) == "SIM" and trade.get("pair"):
+            try:
+                from src.core.pairs_manager import PairsManager
+
+                PairsManager().increment_sim_stats_after_close(
+                    str(trade["pair"]),
+                    float(net_pnl),
+                    risk_usd,
+                )
+            except Exception:
+                logger.exception("increment_sim_stats_after_close failed")
 
     def _apply_net_pnl_to_capital(self, net_pnl: float) -> None:
         if not self.config_table:
@@ -111,6 +136,9 @@ class TradesManager:
 
     def get_open_sims(self) -> list[dict]:
         return [t for t in self.list_trades() if t.get("mode") == "SIM" and t.get("status") == "OPEN"]
+
+    def get_all_open_trades(self) -> list[dict]:
+        return self.list_open(mode="SIM")
 
     def list_open(self, mode: str | None = None) -> list[dict]:
         items = [t for t in self.list_trades() if t.get("status") == "OPEN"]

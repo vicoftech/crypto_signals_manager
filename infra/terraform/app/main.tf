@@ -136,10 +136,12 @@ resource "aws_dynamodb_table_item" "pairs_btc" {
   table_name = aws_dynamodb_table.pairs.name
   hash_key   = aws_dynamodb_table.pairs.hash_key
   item = jsonencode({
-    pair       = { S = "BTCUSDT" }
-    active     = { BOOL = true }
-    tier       = { S = "1" }
-    strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
+    pair                  = { S = "BTCUSDT" }
+    active                = { BOOL = true }
+    tier                  = { S = "1" }
+    auto_trade            = { BOOL = true }
+    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
+    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
   })
 }
 
@@ -147,10 +149,12 @@ resource "aws_dynamodb_table_item" "pairs_eth" {
   table_name = aws_dynamodb_table.pairs.name
   hash_key   = aws_dynamodb_table.pairs.hash_key
   item = jsonencode({
-    pair       = { S = "ETHUSDT" }
-    active     = { BOOL = true }
-    tier       = { S = "1" }
-    strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
+    pair                  = { S = "ETHUSDT" }
+    active                = { BOOL = true }
+    tier                  = { S = "1" }
+    auto_trade            = { BOOL = true }
+    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
+    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
   })
 }
 
