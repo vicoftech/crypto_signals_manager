@@ -57,6 +57,15 @@ def apply_trailing_close_slippage(trailing_sl_price: float, pair: str) -> float:
     return trailing_sl_price * (1.0 - slip)
 
 
+def apply_sl_close_slippage(sl_price: float, pair: str) -> float:
+    """
+    Precio efectivo de ejecucion de un SL fijo: aplica un slippage minimo
+    similar al trailing para aproximar una ejecucion realista.
+    """
+    slip = TRAILING_CLOSE_SLIPPAGE.get(pair, 0.0008)
+    return sl_price * (1.0 - slip)
+
+
 def is_signal_still_valid(signal_price: float, current_price: float, max_drift_pct: float = 0.003) -> bool:
     if signal_price <= 0:
         return False

@@ -277,3 +277,70 @@ resource "aws_athena_named_query" "estrategias_degradadas" {
     ORDER BY r_multiple_promedio ASC;
   SQL
 }
+
+resource "aws_athena_named_query" "btc_filter_impact" {
+  name        = "11_impacto_filtro_btc"
+  description = "Cuántas oportunidades bloquea el filtro de BTC y si mejora el winrate"
+  workgroup   = aws_athena_workgroup.audit.name
+  database    = aws_glue_catalog_database.audit.name
+
+  query = <<-SQL
+    -- IMPACTO DEL FILTRO DE BTC EN ALTCOINS
+    -- Compara winrate de trades cuando BTC estaba alcista vs lateral/bajista
+    SELECT
+        t.strategy,
+        t.pair,
+        mc.btc_trend                                                        AS btc_trend_al_abrir,
+        COUNT(*)                                                             AS total_trades,
+        ROUND(AVG(CASE WHEN t.net_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100, 1) AS winrate_pct,
+        ROUND(AVG(t.r_multiple), 2)                                          AS r_multiple_avg,
+        ROUND(SUM(t.net_pnl), 2)                                             AS pnl_total
+    FROM trades t
+    JOIN market_context_log mc
+        ON t.pair = mc.pair
+        AND DATE(t.started_at) = DATE(mc.timestamp)
+        AND ABS(
+            DATE_DIFF('minute',
+                PARSE_DATETIME(t.started_at, '%Y-%m-%dT%H:%i:%s'),
+                PARSE_DATETIME(mc.timestamp, '%Y-%m-%dT%H:%i:%s')
+            )
+        ) <= 10
+    WHERE t.pair != 'BTCUSDT'
+        AND mc.btc_filter_applied = true
+    GROUP BY t.strategy, t.pair, mc.btc_trend
+    ORDER BY t.pair, mc.btc_trend, r_multiple_avg DESC;
+  SQL
+}
+
+resource "aws_athena_named_query" "btc_sideways_altcoin_performance" {
+  name        = "12_altcoins_con_btc_lateral"
+  description = "Rendimiento de altcoins cuando BTC está lateral"
+  workgroup   = aws_athena_workgroup.audit.name
+  database    = aws_glue_catalog_database.audit.name
+
+  query = <<-SQL
+    -- ALTCOINS CON BTC LATERAL
+    -- Responde: cuando BTC está SIDEWAYS pero el par está BULLISH,
+    -- ¿conviene operar o es mejor esperar a que BTC confirme?
+    SELECT
+        t.strategy,
+        COUNT(*)                                                             AS trades,
+        ROUND(AVG(CASE WHEN t.net_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100, 1) AS winrate_pct,
+        ROUND(AVG(t.r_multiple), 2)                                          AS r_multiple_avg,
+        ROUND(AVG(t.duration_minutes), 0)                                    AS duracion_promedio_min,
+        ROUND(AVG(t.mae) * 100, 3)                                           AS mae_promedio_pct
+    FROM trades t
+    JOIN market_context_log mc
+        ON t.pair = mc.pair
+        AND DATE(t.started_at) = DATE(mc.timestamp)
+        AND ABS(DATE_DIFF('minute',
+            PARSE_DATETIME(t.started_at, '%Y-%m-%dT%H:%i:%s'),
+            PARSE_DATETIME(mc.timestamp, '%Y-%m-%dT%H:%i:%s')
+        )) <= 10
+    WHERE t.pair != 'BTCUSDT'
+        AND mc.btc_trend = 'SIDEWAYS'
+        AND mc.trend = 'BULLISH'
+    GROUP BY t.strategy
+    ORDER BY r_multiple_avg DESC;
+  SQL
+}

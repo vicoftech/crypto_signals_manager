@@ -11,6 +11,8 @@ from src.core.capital import get_capital_snapshot
 from src.core.binance_client import BinanceClient
 from src.core.config_store import ConfigStore
 from src.core.pairs_manager import PairsManager
+from src.core.market_context import MarketContextEvaluator, get_btc_context
+from src.core.indicators import enrich_dataframe
 from src.core.market_session import format_market_session_from_iso
 from src.core.trades_manager import TradesManager
 
@@ -74,8 +76,47 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
         )
     if cmd == "/contexto":
         active = pairs.get_active_pairs()
-        lines = [f"{p.pair}: {'activo' if p.active else 'pausado'} | estrategias={len(p.strategies)}" for p in active]
-        return "Contexto (pares activos)\n" + ("\n".join(lines) if lines else "Sin pares activos")
+        if not active:
+            return "Sin pares activos"
+        scan_id = "webhook-contexto"
+        btc_ctx = get_btc_context(scan_id)
+        btc_icon = {"BULLISH": "🟢", "SIDEWAYS": "🟡", "BEARISH": "🔴"}.get(btc_ctx.trend, "⚪")
+        lines = [
+            f"{btc_icon} BTC GLOBAL: {btc_ctx.trend} | {btc_ctx.volatility}",
+            f"   EMA21: ${btc_ctx.ema21:,.0f} | EMA50: ${btc_ctx.ema50:,.0f} | Close: ${btc_ctx.close:,.0f}",
+            "",
+            "📊 CONTEXTO POR PAR",
+            "──────────────────────────────────────────",
+        ]
+        for pc in active:
+            pair = pc.pair
+            if pair in ("BTCUSDT", "BTCUSDC", "BTCBUSD"):
+                continue
+            try:
+                df = enrich_dataframe(BinanceClient().get_klines_df(pair, "30m", 60))
+                ctx = MarketContextEvaluator.evaluate(
+                    df, pair, scan_id=scan_id, pair_config={"tier": pc.tier}
+                )
+            except Exception:
+                lines.append(f"⚪ {pair:<10} ERROR obteniendo contexto")
+                continue
+            if ctx.tradeable:
+                estado = "✅ OPERABLE "
+            else:
+                if ctx.btc_filter_applied and "BTC" in (ctx.reason or "").upper():
+                    estado = "🔴 BLOQ BTC "
+                else:
+                    estado = "⏸ EN ESPERA"
+            razon_corta = ctx.reason[:25] if len(ctx.reason) > 25 else ctx.reason
+            sim_mode = getattr(pc, "sim_mode", "manual")
+            modo_icon = "🤖" if sim_mode == "auto" else "👤" if sim_mode == "manual" else "⛔"
+            lines.append(
+                f"{modo_icon} {pair:<10} {estado} "
+                f"{ctx.trend:<8} | {ctx.volatility:<6} | {razon_corta}"
+            )
+        lines.append("")
+        lines.append("Proxima evaluacion: ~5 min")
+        return "\n".join(lines)
     if cmd == "/capital":
         if len(parts) >= 2:
             # Solo permitir cambiar el capital inicial si no hay trades registrados

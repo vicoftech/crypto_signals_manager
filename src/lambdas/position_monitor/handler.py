@@ -4,7 +4,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from src.core.auto_sim_utils import apply_trailing_close_slippage
+from src.core.auto_sim_utils import apply_sl_close_slippage, apply_trailing_close_slippage
 from src.core.binance_client import BinanceClient
 from src.core.config_store import ConfigStore
 from src.core.pairs_manager import PairsManager
@@ -44,11 +44,16 @@ def handler(event, context):
                 trade = trades.get_trade(tid) or trade
             if close_reason:
                 exit_px = float(price)
+                pair = str(trade.get("pair", ""))
                 if close_reason == "TRAILING_SL" and trade.get("trailing_sl_final") is not None:
                     exit_px = apply_trailing_close_slippage(
                         float(trade["trailing_sl_final"]),
-                        str(trade.get("pair", "")),
+                        pair,
                     )
+                elif close_reason == "SL":
+                    # Ejecutar siempre en torno al nivel de SL, no al precio del check
+                    sl_level = float(trade.get("sl_price", price) or price)
+                    exit_px = apply_sl_close_slippage(sl_level, pair)
                 trades.close_trade(tid, close_reason, exit_px)
                 closed = trades.get_trade(tid) or {}
                 mercado = closed.get("market_session") or format_market_session_from_iso(

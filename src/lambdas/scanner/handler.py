@@ -57,7 +57,9 @@ def handler(event, context):
         total_pairs += 1
         try:
             df = enrich_dataframe(binance.get_klines_df(pair_cfg.pair, "30m", 150))
-            ctx = MarketContextEvaluator.evaluate(df, pair_cfg.pair, scan_id=scan_id)
+            ctx = MarketContextEvaluator.evaluate(
+                df, pair_cfg.pair, scan_id=scan_id, pair_config={"tier": pair_cfg.tier}
+            )
             context_evals += 1
             if not ctx.tradeable:
                 strategies_skipped_no_tradeable += len(pair_cfg.strategies)
