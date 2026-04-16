@@ -162,3 +162,20 @@ class TelegramClient:
             f"{info.get('reason', '')}"
         )
         self._send(text)
+
+    def send_capital_insuficiente(self, pair: str, snapshot: dict, risk_requerido: float) -> None:
+        """
+        Notificacion cuando una oportunidad no se puede simular por falta de capital.
+        """
+        text = (
+            "⚠️ SIN CAPITAL DISPONIBLE\n\n"
+            f"📊 {pair}\n"
+            f"Capital total:      ${snapshot['capital_total']:,.2f}\n"
+            f"Capital bloqueado:  ${snapshot['capital_bloqueado']:,.2f}  "
+            f"({snapshot['posiciones_abiertas']} posiciones abiertas)\n"
+            f"Capital disponible: ${snapshot['capital_disponible']:,.2f}\n"
+            f"Riesgo requerido:   ${risk_requerido:,.2f}\n\n"
+            "→ Señal registrada pero no simulada.\n"
+            "  Espera que cierren posiciones abiertas."
+        )
+        self._send(text)

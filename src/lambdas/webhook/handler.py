@@ -7,6 +7,7 @@ import requests
 
 from src.config import binance_credentials_configured, settings
 from src.core.auto_sim_utils import calcular_pnl_circunstancial
+from src.core.capital import get_capital_snapshot
 from src.core.binance_client import BinanceClient
 from src.core.config_store import ConfigStore
 from src.core.pairs_manager import PairsManager
@@ -77,11 +78,41 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
         return "Contexto (pares activos)\n" + ("\n".join(lines) if lines else "Sin pares activos")
     if cmd == "/capital":
         if len(parts) >= 2:
-            value = float(parts[1].replace(",", "."))
-            config.set_capital(value)
-            return f"Capital actualizado a {value:.2f}"
-        cur = config.get_capital(settings.capital_total)
-        return f"Capital actual: {cur:.2f} USD\nPara fijar: /capital 1183.50"
+            # Solo permitir cambiar el capital inicial si no hay trades registrados
+            try:
+                nuevo = float(parts[1].replace(",", "."))
+            except ValueError:
+                return "Formato invalido. Usa /capital 1183.50"
+            if trades.list_trades():
+                snap = get_capital_snapshot().as_dict()
+                return (
+                    "❌ No se puede cambiar el capital inicial con operaciones ya registradas.\n"
+                    f"Capital inicial actual: {snap['capital_inicial']:.2f}\n"
+                    "Usa /reset_capital cuando no haya posiciones abiertas para iniciar una nueva sesion."
+                )
+            # Sin trades: actualizar capital_inicial y capital_total en ConfigTable
+            config.set_number("capital_inicial", nuevo)
+            config.set_capital(nuevo)
+            return f"Capital inicial actualizado a {nuevo:.2f}"
+        cap = get_capital_snapshot().as_dict()
+        pnl_emoji = "📈" if cap["pnl_cerrado"] >= 0 else "📉"
+        dd_text = (
+            f"⚠️ Drawdown: {cap['drawdown_actual']:.1%}"
+            if cap["drawdown_actual"] > 0
+            else "✅ Sin drawdown"
+        )
+        riesgo_prox = cap["capital_total"] * settings.risk_per_trade_pct
+        return (
+            "💼 ESTADO DEL CAPITAL SIMULADO\n\n"
+            f"💰 Capital inicial:    ${cap['capital_inicial']:,.2f}\n"
+            f"{pnl_emoji} P&L cerrado:       ${cap['pnl_cerrado']:+,.2f}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 Capital total:      ${cap['capital_total']:,.2f}\n\n"
+            f"🔒 Bloqueado ({cap['posiciones_abiertas']} ops): -${cap['capital_bloqueado']:,.2f}\n"
+            f"✅ Disponible:         ${cap['capital_disponible']:,.2f}\n\n"
+            f"{dd_text}\n"
+            f"Riesgo proxima op:    ${riesgo_prox:,.2f}  ({settings.risk_per_trade_pct*100:.1f}%)"
+        )
     if cmd == "/riesgo" and len(parts) >= 2:
         pct = min(float(parts[1]) / 100.0, 0.10)
         config.set_risk_pct(pct)

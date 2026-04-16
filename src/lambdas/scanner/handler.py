@@ -7,7 +7,7 @@ import uuid
 
 from src.config import settings
 from src.core.binance_client import BinanceClient
-from src.core.calculator import with_risk
+from src.core.calculator import InsufficientCapitalError, with_risk
 from src.core.config_store import ConfigStore
 from src.core.filters import needs_drift_recalc, passes_quality_filters
 from src.core.indicators import enrich_dataframe
@@ -79,7 +79,20 @@ def handler(event, context):
                 current_price = binance.get_price(pair_cfg.pair)
                 if needs_drift_recalc(opp.entry_price, current_price):
                     opp.entry_price = current_price
-                op_data = with_risk(opp, current_price)
+                try:
+                    op_data = with_risk(opp, current_price)
+                except InsufficientCapitalError as e:
+                    logger.warning("[CAPITAL] %s %s — %s", pair_cfg.pair, strategy_name, e)
+                    # Aviso resumido de capital insuficiente
+                    try:
+                        from src.core.capital import get_capital_snapshot
+
+                        snap = get_capital_snapshot().as_dict()
+                        required = snap["capital_total"] * settings.risk_per_trade_pct
+                        telegram.send_capital_insuficiente(pair_cfg.pair, snap, required)
+                    except Exception:
+                        logger.exception("capital snapshot / aviso insuficiente fallo")
+                    continue
                 if not passes_quality_filters(op_data):
                     filtered_out += 1
                     log_strategy_execution(

@@ -139,6 +139,9 @@ resource "aws_dynamodb_table_item" "pairs_btc" {
     pair                  = { S = "BTCUSDT" }
     active                = { BOOL = true }
     tier                  = { S = "1" }
+    sim_mode              = { S = "auto" }
+    sim_auto_enabled_at   = { S = "2026-01-01T00:00:00+00:00" }
+    sim_auto_reason       = { S = "Terraform: auto-sim" }
     auto_trade            = { BOOL = true }
     auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
     strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
@@ -152,6 +155,9 @@ resource "aws_dynamodb_table_item" "pairs_eth" {
     pair                  = { S = "ETHUSDT" }
     active                = { BOOL = true }
     tier                  = { S = "1" }
+    sim_mode              = { S = "auto" }
+    sim_auto_enabled_at   = { S = "2026-01-01T00:00:00+00:00" }
+    sim_auto_reason       = { S = "Terraform: auto-sim" }
     auto_trade            = { BOOL = true }
     auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
     strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
