@@ -106,13 +106,16 @@ def log_strategy_execution(
 
 
 def log_opportunity(scan_id: str, opp: dict[str, Any]) -> None:
+    oid = opp.get("opportunity_id")
+    if not oid:
+        oid = str(uuid.uuid4())
     _emit_audit(
         {
             "event_type": "opportunity",
             "scan_id": scan_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "session": _session(),
-            "opportunity_id": str(uuid.uuid4()),
+            "opportunity_id": str(oid),
             "pair": opp.get("pair"),
             "tier": opp.get("tier", "1"),
             "strategy": opp.get("strategy"),
@@ -126,7 +129,9 @@ def log_opportunity(scan_id: str, opp: dict[str, Any]) -> None:
             "rr_ratio": opp.get("rr_ratio"),
             "risk_usd": opp.get("risk_usd"),
             "position_size_usd": opp.get("position_size_usd"),
-            "confluence": opp.get("confluence", False),
+            "confluence": bool(opp.get("confluence", False)),
+            "market_trend": str(opp.get("market_trend", "")),
+            "market_volatility": str(opp.get("market_volatility", "")),
             "drift_pct": float(opp.get("drift_pct") or 0.0),
         }
     )

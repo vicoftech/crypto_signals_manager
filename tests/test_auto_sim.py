@@ -9,6 +9,7 @@ from src.core.auto_sim_utils import (
     calcular_pnl_circunstancial,
     check_auto_trade_eligibility,
     is_signal_still_valid,
+    trade_payload_from_op_data,
 )
 
 
@@ -78,3 +79,26 @@ def test_eligibility_cumple():
     )
     assert r["winrate"] == 0.5
     assert r["eligible"] is True
+
+
+def test_trade_payload_includes_context_fields():
+    op = {
+        "pair": "BTCUSDT",
+        "strategy": "X",
+        "timeframe": "30m",
+        "tier": "1",
+        "entry_actual_price": 100.0,
+        "sl_price": 99.0,
+        "tp1_price": 101.0,
+        "tp2_price": 102.0,
+        "position_size_usd": 1000.0,
+        "opportunity_id": "oid-1",
+        "confluence": True,
+        "market_trend": "up",
+        "market_volatility": "high",
+    }
+    p = trade_payload_from_op_data(op, "auto")
+    assert p["opportunity_id"] == "oid-1"
+    assert p["confluence"] is True
+    assert p["market_trend"] == "up"
+    assert p["market_volatility"] == "high"

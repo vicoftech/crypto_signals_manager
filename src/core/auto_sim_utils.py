@@ -123,6 +123,10 @@ def trade_payload_from_op_data(op: dict[str, Any], sim_source: str) -> dict[str,
         "sim_source": sim_source,
         "max_favorable_excursion": ent,
         "max_adverse_excursion": ent,
+        "opportunity_id": str(op.get("opportunity_id", "")),
+        "confluence": bool(op.get("confluence", False)),
+        "market_trend": str(op.get("market_trend", "")),
+        "market_volatility": str(op.get("market_volatility", "")),
     }
 
 

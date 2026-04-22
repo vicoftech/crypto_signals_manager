@@ -1,20 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
+import logging
 import os
 
 import requests
-
-from src.config import binance_credentials_configured, settings
-from src.core.auto_sim_utils import calcular_pnl_circunstancial
-from src.core.capital import get_capital_snapshot
-from src.core.binance_client import BinanceClient
-from src.core.config_store import ConfigStore
-from src.core.pairs_manager import PairsManager
-from src.core.market_context import MarketContextEvaluator, get_btc_context
-from src.core.indicators import enrich_dataframe
-from src.core.market_session import format_market_session_from_iso
-from src.core.trades_manager import TradesManager
 
 COMMANDS_HELP = {
     "/menu": "Muestra este menu contextual con todos los comandos.",
@@ -34,9 +25,9 @@ COMMANDS_HELP = {
     "/simstatus": "Modo y stats de sim por par.",
     "/simstats <PAR>": "Stats de simulacion de un par.",
     "/confirmado <PAR>": "Cierra operacion REAL abierta del par como MANUAL.",
-    "/historial": "Ultimas 20 operaciones cerradas con P&L.",
-    "/resumen": "Resumen general de operaciones (abiertas/cerradas/modo).",
-    "/rendimiento": "Metricas globales de winrate y P&L neto.",
+    "/historial": "Ultimas 20 cierres (cohorte post-corte en config) con P&L.",
+    "/resumen": "Abiertas (todas) + cierres y P&L agregado desde corte (config) si aplica.",
+    "/rendimiento": "Winrate y P&L de cierres de la cohorte (post-corte en config) si aplica.",
     "/operacion <trade_id>": "Muestra todos los detalles de una operacion puntual.",
 }
 
@@ -48,32 +39,45 @@ def _normalize_cmd(part0: str) -> str:
 
 
 def _send_message(text: str, chat_id: str | int | None = None) -> None:
+    log = logging.getLogger(__name__)
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     target = chat_id if chat_id is not None else os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not target:
         return
-    requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": target, "text": text},
-        timeout=15,
-    ).raise_for_status()
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": target, "text": text},
+            timeout=12,
+        )
+        r.raise_for_status()
+    except requests.RequestException as e:
+        err = ""
+        if getattr(e, "response", None) is not None and e.response is not None:
+            err = (e.response.text or "")[:500]
+        log.warning("sendMessage failed: %s body=%s", e, err)
 
 
-def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades: TradesManager) -> str:
+def _handle_command(
+    text: str,
+    config: "ConfigStore",  # noqa: F821
+    pairs: "PairsManager",  # noqa: F821
+    trades: "TradesManager",  # noqa: F821
+) -> str:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from src.config import settings
+    from src.core.accounting import format_accounting_block, format_accounting_line_short
+    from src.core.auto_sim_utils import calcular_pnl_circunstancial
+    from src.core.binance_client import BinanceClient
+    from src.core.capital import get_capital_snapshot
+    from src.core.indicators import enrich_dataframe
+    from src.core.market_context import MarketContextEvaluator, get_btc_context
+    from src.core.market_session import format_market_session_from_iso
+
     parts = text.strip().split()
     cmd = _normalize_cmd(parts[0])
 
-    if cmd == "/menu" or cmd == "/help":
-        return "Menu de comandos disponibles\n\n" + "\n".join(
-            f"{k}\n  - {v}" for k, v in COMMANDS_HELP.items()
-        )
-    if cmd == "/status":
-        return (
-            "Estado bot\n"
-            f"- scanner_paused: {'SI' if config.is_paused() else 'NO'}\n"
-            f"- capital_total: {config.get_capital(settings.capital_total):.2f}\n"
-            f"- risk_pct: {config.get_risk_pct(settings.risk_per_trade_pct) * 100:.1f}%"
-        )
     if cmd == "/contexto":
         active = pairs.get_active_pairs()
         if not active:
@@ -88,18 +92,20 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
             "📊 CONTEXTO POR PAR",
             "──────────────────────────────────────────",
         ]
-        for pc in active:
+        alts = [p for p in active if p.pair not in ("BTCUSDT", "BTCUSDC", "BTCBUSD")]
+        max_alts = 6
+        truncated = len(alts) > max_alts
+        slice_ = alts[:max_alts]
+
+        def _line_for_alt(pc):
             pair = pc.pair
-            if pair in ("BTCUSDT", "BTCUSDC", "BTCBUSD"):
-                continue
             try:
                 df = enrich_dataframe(BinanceClient().get_klines_df(pair, "30m", 60))
                 ctx = MarketContextEvaluator.evaluate(
                     df, pair, scan_id=scan_id, pair_config={"tier": pc.tier}
                 )
             except Exception:
-                lines.append(f"⚪ {pair:<10} ERROR obteniendo contexto")
-                continue
+                return f"⚪ {pair:<10} ERROR obteniendo contexto"
             if ctx.tradeable:
                 estado = "✅ OPERABLE "
             else:
@@ -110,11 +116,16 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
             razon_corta = ctx.reason[:25] if len(ctx.reason) > 25 else ctx.reason
             sim_mode = getattr(pc, "sim_mode", "manual")
             modo_icon = "🤖" if sim_mode == "auto" else "👤" if sim_mode == "manual" else "⛔"
-            lines.append(
+            return (
                 f"{modo_icon} {pair:<10} {estado} "
                 f"{ctx.trend:<8} | {ctx.volatility:<6} | {razon_corta}"
             )
+
+        with ThreadPoolExecutor(max_workers=max(1, min(len(slice_), 6))) as ex:
+            lines.extend(ex.map(_line_for_alt, slice_))
         lines.append("")
+        if truncated:
+            lines.append(f"(Muestra {max_alts} alts max.; hay mas pares activos.)")
         lines.append("Proxima evaluacion: ~5 min")
         return "\n".join(lines)
     if cmd == "/capital":
@@ -152,7 +163,8 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
             f"🔒 Bloqueado ({cap['posiciones_abiertas']} ops): -${cap['capital_bloqueado']:,.2f}\n"
             f"✅ Disponible:         ${cap['capital_disponible']:,.2f}\n\n"
             f"{dd_text}\n"
-            f"Riesgo proxima op:    ${riesgo_prox:,.2f}  ({settings.risk_per_trade_pct*100:.1f}%)"
+            f"Riesgo proxima op:    ${riesgo_prox:,.2f}  ({settings.risk_per_trade_pct*100:.1f}%)\n\n"
+            f"{format_accounting_block()}"
         )
     if cmd == "/riesgo" and len(parts) >= 2:
         pct = min(float(parts[1]) / 100.0, 0.10)
@@ -192,9 +204,21 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
         lines_out = []
         total_pnl = 0.0
         total_risk = 0.0
-        for i, t in enumerate(sims[:20], start=1):
+        sim_cap = 8
+        sims_limited = sims[:sim_cap]
+        pairs_px = [str(t.get("pair", "")) for t in sims_limited]
+        n = len(pairs_px)
+
+        def _safe_price(p: str) -> float:
+            try:
+                return float(bc.get_price(p))
+            except Exception:
+                return 0.0
+
+        with ThreadPoolExecutor(max_workers=max(1, min(n, 8))) as ex:
+            price_list = list(ex.map(_safe_price, pairs_px))
+        for i, (t, px) in enumerate(zip(sims_limited, price_list), start=1):
             pair = str(t.get("pair", ""))
-            px = bc.get_price(pair)
             ent = float(t.get("entry_price", 0) or 0)
             size = float(t.get("position_size_usd", 100) or 100)
             comm_in = float(t.get("entry_commission_usd", size * 0.001) or 0)
@@ -210,7 +234,11 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
         pct_tot = (total_pnl / sum(float(x.get("position_size_usd", 100) or 100) for x in sims)) * 100 if sims else 0
         tail = f"\n─────────────────\n💼 P&L total abierto (estim.): {total_pnl:+.2f} USD (~{pct_tot:+.2f}% pond.)\n"
         tail += f"Riesgo expuesto (sum risk_usd): {total_risk:.2f} USD"
-        return "📊 POSICIONES ABIERTAS (" + str(len(sims)) + ")\n\n" + "\n\n".join(lines_out) + tail
+        more = f"\n... y {len(sims) - sim_cap} mas (muestra max {sim_cap})." if len(sims) > sim_cap else ""
+        return (
+            "📊 POSICIONES ABIERTAS (" + str(len(sims)) + ")\n\n" + "\n\n".join(lines_out) + tail + more
+            + "\n\n" + format_accounting_line_short()
+        )
     if cmd == "/simconfig" and len(parts) >= 3:
         par = parts[1].upper().strip()
         mode = parts[2].lower().strip()
@@ -249,6 +277,10 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
             )
         wt = (100 * total_w / total_t) if total_t else 0.0
         lines.append(f"\nTotal SIM acumulado (stats): {total_t} trades | win ~{wt:.0f}% | P&L {total_pnl:+.0f}")
+        lines.append(
+            "\n(Stats por par: contador local; /rendimiento usa cierres en cohorte = accounting_epoch.)"
+        )
+        lines.append("\n" + format_accounting_line_short())
         return "\n".join(lines)
     if cmd == "/simstats" and len(parts) >= 2:
         p = pairs.get_pair(parts[1])
@@ -268,7 +300,9 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
             f"Ganadoras: {gw}  Perdedoras: {pl}  Win%: {wr:.0f}%\n"
             f"R multiple avg: {rav:+.2f}\n"
             f"P&L acumulado (stats): {pnl:+.2f} USD\n"
-            f"Objetivo auto-trade: {100 - ts} trades hasta minimo 100 (si aplica)"
+            f"Objetivo auto-trade: {100 - ts} trades hasta minimo 100 (si aplica)\n"
+            f"(Stats = contador en par; /rendimiento = cohorte accounting.)\n\n"
+            f"{format_accounting_line_short()}"
         )
     if cmd == "/confirmado" and len(parts) >= 2:
         trade = trades.find_open_real_by_pair(parts[1])
@@ -285,26 +319,33 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
             f"id={t.get('trade_id')} | {t.get('pair')} | {t.get('mode')} | {t.get('close_reason')} | net={float(t.get('net_pnl_usd', 0) or 0):+.2f}"
             for t in rows
         ]
-        return "Historial (ultimas cerradas)\n" + "\n".join(lines)
+        return (
+            "Historial (ultimas 20 cierres en cohorte de contabilidad)\n"
+            + "\n".join(lines)
+            + "\n\n"
+            + format_accounting_line_short()
+        )
     if cmd == "/resumen":
         s = trades.get_summary()
         open_count = len(trades.list_open())
         return (
-            "Resumen operativo\n"
-            f"- total: {s['total']}\n"
+            "Resumen operativo (abiertas = todas; cierres y P&L neto = cohorte post-corte en config)\n"
+            f"- total (abiertas + cierres cohorte): {s['total']}\n"
             f"- abiertas: {open_count}\n"
-            f"- cerradas: {s['closed']}\n"
+            f"- cerradas (cohorte): {s['closed']}\n"
             f"- REAL: {s['by_mode']['REAL']} | SIM: {s['by_mode']['SIM']}\n"
-            f"- neto acumulado: {s['net_pnl']:+.2f} USD"
+            f"- neto acumulado (solo cierres cohorte): {s['net_pnl']:+.2f} USD\n\n"
+            f"{format_accounting_line_short()}"
         )
     if cmd == "/rendimiento":
         s = trades.get_summary()
         winrate = (s["wins"] / s["closed"] * 100.0) if s["closed"] else 0.0
         return (
-            "Rendimiento\n"
+            "Rendimiento (solo cierres de la cohorte; ver accounting_epoch en config)\n"
             f"- operaciones cerradas: {s['closed']}\n"
             f"- winrate: {winrate:.1f}%\n"
-            f"- P&L neto: {s['net_pnl']:+.2f} USD"
+            f"- P&L neto: {s['net_pnl']:+.2f} USD\n\n"
+            f"{format_accounting_line_short()}"
         )
     if cmd == "/operacion" and len(parts) >= 2:
         t = trades.get_trade(parts[1].strip())
@@ -346,6 +387,9 @@ def _handle_command(text: str, config: ConfigStore, pairs: PairsManager, trades:
 
 
 def _handle_callback(callback_query: dict) -> str:
+    from src.config import binance_credentials_configured, settings
+    from src.core.trades_manager import TradesManager
+
     data = callback_query.get("data", "")
     parts = data.split("|")
     if len(parts) < 4:
@@ -404,28 +448,101 @@ def _reason_text_from_code(code: str | None) -> str:
     return mapping.get(normalized, f"Cierre por {normalized or 'motivo no informado'}")
 
 
+def _queue_deferred(telegram_update: dict) -> None:
+    """
+    Responde rapido a API Gateway (limite ~30s). El trabajo largo se ejecuta en otra
+    invocacion Lambda (async), sin pasar por el timeout compartido con Telegram.
+    """
+    name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "")
+    inner = {
+        "webhook_deferred": True,
+        "telegram_update": telegram_update,
+    }
+    if not name:
+        _process_telegram_update(telegram_update)
+        return
+    import boto3
+
+    boto3.client("lambda").invoke(
+        FunctionName=name,
+        InvocationType="Event",
+        Payload=json.dumps(inner),
+    )
+
+
+def _process_telegram_update(update: dict) -> None:
+    log = logging.getLogger(__name__)
+    try:
+        callback_query = update.get("callback_query")
+        if callback_query:
+            response_text = _handle_callback(callback_query)
+            cq_chat = (callback_query.get("message") or {}).get("chat", {}).get("id")
+            _send_message(response_text, chat_id=cq_chat)
+            return
+        message = update.get("message") or {}
+        text = (message.get("text") or "")
+        if not (text and str(text).strip().startswith("/")):
+            return
+        text = str(text).strip()
+        chat_id = message.get("chat", {}).get("id")
+        parts = text.split()
+        if not parts:
+            return
+        cmd = _normalize_cmd(parts[0])
+        if cmd in ("/menu", "/help"):
+            response_text = "Menu de comandos disponibles\n\n" + "\n".join(
+                f"{k}\n  - {v}" for k, v in COMMANDS_HELP.items()
+            )
+            _send_message(response_text, chat_id=chat_id)
+            return
+        if cmd == "/status":
+            from src.config import settings
+            from src.core.config_store import ConfigStore
+
+            config = ConfigStore()
+            response_text = (
+                "Estado bot\n"
+                f"- scanner_paused: {'SI' if config.is_paused() else 'NO'}\n"
+                f"- capital_total: {config.get_capital(settings.capital_total):.2f}\n"
+                f"- risk_pct: {config.get_risk_pct(settings.risk_per_trade_pct) * 100:.1f}%"
+            )
+            _send_message(response_text, chat_id=chat_id)
+            return
+        from src.core.config_store import ConfigStore
+        from src.core.pairs_manager import PairsManager
+        from src.core.trades_manager import TradesManager
+
+        config = ConfigStore()
+        pairs = PairsManager()
+        trades = TradesManager()
+        response_text = _handle_command(text, config, pairs, trades)
+        _send_message(response_text, chat_id=chat_id)
+    except Exception:  # noqa: BLE001
+        log.exception("webhook: fallo al procesar update")
+
+
 def handler(event, context):
-    body = event.get("body", "{}")
-    if event.get("isBase64Encoded"):
-        # API Gateway HTTP API usually sends plain text body, kept for compatibility.
-        body = body
-    payload = json.loads(body) if isinstance(body, str) else body
-    callback_query = payload.get("callback_query")
-    if callback_query:
-        response_text = _handle_callback(callback_query)
-        cq_chat = (callback_query.get("message") or {}).get("chat", {}).get("id")
-        _send_message(response_text, chat_id=cq_chat)
-        return {"statusCode": 200, "body": json.dumps({"ok": True, "response": response_text})}
-
-    message = payload.get("message") or {}
-    text = message.get("text", "")
-    if not text.startswith("/"):
+    if event.get("webhook_deferred") and "telegram_update" in event:
+        _process_telegram_update(event["telegram_update"])
+        return {"statusCode": 200, "body": json.dumps({"ok": True, "deferred": True})}
+    body = event.get("body") or "{}"
+    if event.get("isBase64Encoded") and isinstance(body, str):
+        body = base64.b64decode(body).decode("utf-8")
+    update = json.loads(body) if isinstance(body, str) else body
+    if update.get("callback_query"):
+        _queue_deferred(update)
+        return {"statusCode": 200, "body": json.dumps({"ok": True, "queued": True})}
+    message = update.get("message") or {}
+    text = (message.get("text") or "")
+    if not text or not str(text).strip().startswith("/"):
         return {"statusCode": 200, "body": json.dumps({"ok": True, "ignored": True})}
-
-    chat_id = message.get("chat", {}).get("id")
-    config = ConfigStore()
-    pairs = PairsManager()
-    trades = TradesManager()
-    response_text = _handle_command(text, config, pairs, trades)
-    _send_message(response_text, chat_id=chat_id)
-    return {"statusCode": 200, "body": json.dumps({"ok": True, "response": response_text})}
+    text = str(text).strip()
+    parts = text.split()
+    if not parts:
+        return {"statusCode": 200, "body": json.dumps({"ok": True, "ignored": True})}
+    cmd = _normalize_cmd(parts[0])
+    if cmd in ("/menu", "/help", "/status"):
+        _process_telegram_update(update)
+        return {"statusCode": 200, "body": json.dumps({"ok": True, "response": "sync"})}
+    _queue_deferred(update)
+    return {"statusCode": 200, "body": json.dumps({"ok": True, "queued": True})}

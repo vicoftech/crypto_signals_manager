@@ -13,6 +13,7 @@ from src.core.telegram_client import TelegramClient
 from src.core.market_session import format_market_session_from_iso
 from src.core.trades_manager import TradesManager
 from src.core.audit import log_trade_from_row
+from src.core.accounting import format_accounting_line_short
 
 trades = TradesManager()
 binance = BinanceClient()
@@ -102,7 +103,8 @@ def handler(event, context):
                             f"Motivo: {close_reason}\n"
                             f"Salida: {float(closed.get('exit_price', exit_px) or exit_px):.4f}\n"
                             f"P&L neto: {net:+.2f} USD\n"
-                            f"Capital actual: {capital:.2f}"
+                            f"Capital actual: {capital:.2f}\n\n"
+                            f"{format_accounting_line_short()}"
                         )
                     )
                 el = pairs.eligibility_for_pair(str(closed.get("pair", "")))

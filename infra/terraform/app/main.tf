@@ -191,6 +191,16 @@ resource "aws_dynamodb_table_item" "cfg_paused" {
   })
 }
 
+# Cohorte P&L / resumenes: cierres con ended_at >= epoch; abiertas siempre. Corte operativo desde 2026-04-17.
+resource "aws_dynamodb_table_item" "cfg_accounting_epoch" {
+  table_name = aws_dynamodb_table.config.name
+  hash_key   = aws_dynamodb_table.config.hash_key
+  item = jsonencode({
+    key   = { S = "accounting_epoch_started_at" }
+    value = { S = "2026-04-17T00:00:00+00:00" }
+  })
+}
+
 resource "aws_ssm_parameter" "telegram_bot_token" {
   name  = "/trading-bot/TELEGRAM_BOT_TOKEN"
   type  = "SecureString"
@@ -214,6 +224,7 @@ locals {
 
   lambda_env = {
     CAPITAL_TOTAL        = "1183.0"
+    BINANCE_HTTP_TIMEOUT  = "2.5"
     RISK_PER_TRADE_PCT   = "0.05"
     MIN_RR_RATIO         = "2.5"
     MAX_SL_PCT           = "0.02"
@@ -277,8 +288,9 @@ resource "aws_lambda_function" "webhook" {
   s3_bucket        = var.artifact_bucket
   s3_key           = aws_s3_object.lambda_bundle.key
   source_code_hash = filebase64sha256(var.lambda_zip_path)
-  timeout          = 15
-  memory_size      = 128
+  # API Gateway max ~30s; el handler responde 200 y delega a invoke async, que puede ir hasta 60s.
+  timeout          = 60
+  memory_size      = 256
   environment { variables = local.lambda_env }
 }
 
@@ -427,5 +439,5 @@ output "scanner_lambda_name" {
 }
 
 output "webhook_url" {
-  value = "${aws_apigatewayv2_stage.webhook_stage.invoke_url}/webhook"
+  value = "${trimsuffix(aws_apigatewayv2_stage.webhook_stage.invoke_url, "/")}/webhook"
 }

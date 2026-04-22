@@ -47,3 +47,18 @@ class ConfigStore:
 
     def set_number(self, key: str, value: float) -> None:
         self._put({"key": key, "value": Decimal(str(value))})
+
+    def get_str(self, key: str, default: str = "") -> str:
+        val = self._get(key).get("value")
+        if val is None:
+            return default
+        if isinstance(val, str):
+            return val
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        if isinstance(val, Decimal):
+            return str(val)
+        return str(val)
+
+    def set_str(self, key: str, value: str) -> None:
+        self._put({"key": key, "value": value})

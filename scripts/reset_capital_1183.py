@@ -10,6 +10,8 @@ Uso:
     PYTHONPATH=. python3 scripts/reset_capital_1183.py
 """
 
+from datetime import datetime, timezone
+
 from src.core.config_store import ConfigStore
 
 
@@ -18,7 +20,10 @@ def main() -> int:
     target = 1183.0
     store.set_number("capital_inicial", target)
     store.set_capital(target)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    store.set_str("accounting_epoch_started_at", now)
     print(f"Capital inicial y total reseteados a {target:.2f}")
+    print(f"Contabilidad: accounting_epoch_started_at = {now} (corte P&L / resumenes)")
     return 0
 
 

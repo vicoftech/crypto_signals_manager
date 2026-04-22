@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pandas as pd
 import requests
+
+_DEFAULT_HTTP_TIMEOUT = 2.5
 
 
 class BinanceClient:
@@ -11,12 +14,13 @@ class BinanceClient:
         self.api_key = api_key
         self.api_secret = api_secret
         self.base_url = "https://api.binance.com"
+        self._timeout = float(os.getenv("BINANCE_HTTP_TIMEOUT", str(_DEFAULT_HTTP_TIMEOUT)) or _DEFAULT_HTTP_TIMEOUT)
 
     def get_klines_df(self, pair: str, interval: str, limit: int = 100) -> pd.DataFrame:
         resp = requests.get(
             f"{self.base_url}/api/v3/klines",
             params={"symbol": pair, "interval": interval, "limit": limit},
-            timeout=10,
+            timeout=self._timeout,
         )
         resp.raise_for_status()
         rows = resp.json()
@@ -43,7 +47,7 @@ class BinanceClient:
         resp = requests.get(
             f"{self.base_url}/api/v3/ticker/price",
             params={"symbol": pair},
-            timeout=10,
+            timeout=self._timeout,
         )
         resp.raise_for_status()
         return float(resp.json()["price"])

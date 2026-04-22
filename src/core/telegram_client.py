@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import requests
 
 from src.config import binance_credentials_configured
+from src.core.accounting import format_accounting_line_short
 from src.core.auto_sim_utils import calcular_pnl_circunstancial, calcular_pnl_asegurado_trailing
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ class TelegramClient:
             f"🏆 TP2:      ${opp['tp2_price']:,.2f}\n"
             f"📐 R/R:      1 : {opp['rr_ratio']:.1f}\n\n"
             f"💰 Riesgo: ${risk:.2f}\n"
-            f"⏰ {t}"
+            f"⏰ {t}\n\n{format_accounting_line_short()}"
         )
         self._send(text)
 
@@ -147,6 +148,7 @@ class TelegramClient:
         )
         if stats_line:
             text += f"\n\n📊 {stats_line}"
+        text += f"\n\n{format_accounting_line_short()}"
         self._send(text)
 
     def send_sim_progress_update(self, trade: dict, current_price: float) -> None:

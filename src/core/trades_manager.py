@@ -21,6 +21,11 @@ class TradesManager:
         self.config_table = boto3.resource("dynamodb").Table(self.config_table_name) if self.config_table_name else None
         self._trades: dict[str, dict] = {}
 
+    def _in_accounting_window(self, trade: dict) -> bool:
+        from src.core.accounting import get_accounting_epoch_iso, trade_in_accounting_window
+
+        return trade_in_accounting_window(trade, get_accounting_epoch_iso())
+
     def open_trade(self, payload: dict, mode: str) -> str:
         trade_id = str(uuid4())
         started = datetime.now(timezone.utc)
@@ -159,7 +164,11 @@ class TradesManager:
         return sorted(items, key=lambda x: str(x.get("started_at", "")), reverse=True)
 
     def list_recent_closed(self, limit: int = 20) -> list[dict]:
-        items = [t for t in self.list_trades() if t.get("status") == "CLOSED"]
+        items = [
+            t
+            for t in self.list_trades()
+            if t.get("status") == "CLOSED" and self._in_accounting_window(t)
+        ]
         items = sorted(items, key=lambda x: str(x.get("ended_at", "")), reverse=True)
         return items[:limit]
 
@@ -169,8 +178,13 @@ class TradesManager:
         return list(self._trades.values())
 
     def get_summary(self) -> dict:
-        items = self.list_trades()
-        closed = [t for t in items if t.get("status") == "CLOSED"]
+        """
+        Cerradas: cohorte post accounting_epoch (si config). Abiertas: siempre.
+        """
+        all_t = self.list_trades()
+        opens = [t for t in all_t if t.get("status") == "OPEN"]
+        closed = [t for t in all_t if t.get("status") == "CLOSED" and self._in_accounting_window(t)]
+        items = opens + closed
         total = len(items)
         wins = len([t for t in closed if float(t.get("net_pnl_usd", 0) or 0) > 0])
         net = sum(float(t.get("net_pnl_usd", 0) or 0) for t in closed)

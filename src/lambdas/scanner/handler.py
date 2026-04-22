@@ -22,6 +22,7 @@ from src.core.state import CooldownState
 from src.core.telegram_client import TelegramClient, format_sim_progress_message
 from src.core.trades_manager import TradesManager
 from src.core.audit import log_opportunity, log_scan_cycle, log_strategy_execution
+from src.core.accounting import format_accounting_line_short
 from src.strategies import STRATEGY_REGISTRY
 
 logger = logging.getLogger()
@@ -83,6 +84,13 @@ def handler(event, context):
                     opp.entry_price = current_price
                 try:
                     op_data = with_risk(opp, current_price)
+                    op_data["opportunity_id"] = str(uuid.uuid4())
+                    op_data["market_trend"] = str(ctx.trend)
+                    op_data["market_volatility"] = str(ctx.volatility)
+                    if "confluence" not in op_data:
+                        op_data["confluence"] = bool(
+                            op_data.get("confluence", getattr(opp, "confluence", False))
+                        )
                 except InsufficientCapitalError as e:
                     logger.warning("[CAPITAL] %s %s — %s", pair_cfg.pair, strategy_name, e)
                     # Aviso resumido de capital insuficiente
@@ -194,6 +202,7 @@ def handler(event, context):
             f"- filtradas_calidad: {agg_filtered}\n"
             f"- errores: {agg_errors}"
         ) + pos_section
+        summary = summary + "\n\n" + format_accounting_line_short()
         telegram.send_trade_update(summary)
         config_store.set_number("scanner_batch_count", 0)
         config_store.set_number("scanner_agg_pairs_activos", 0)
