@@ -30,8 +30,8 @@ resource "aws_iam_role" "lambda_exec" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "lambda.amazonaws.com" }
     }]
   })
@@ -143,8 +143,8 @@ resource "aws_dynamodb_table_item" "pairs_btc" {
     sim_auto_enabled_at   = { S = "2026-01-01T00:00:00+00:00" }
     sim_auto_reason       = { S = "Terraform: auto-sim" }
     auto_trade            = { BOOL = true }
-    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
-    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
+    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
   })
 }
 
@@ -159,8 +159,75 @@ resource "aws_dynamodb_table_item" "pairs_eth" {
     sim_auto_enabled_at   = { S = "2026-01-01T00:00:00+00:00" }
     sim_auto_reason       = { S = "Terraform: auto-sim" }
     auto_trade            = { BOOL = true }
-    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
-    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }, { S = "Momentum" }] }
+    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+  })
+}
+
+# Pares pausados manualmente (sin Momentum; alineado con DynamoDB).
+# Si el ítem ya existía fuera de Terraform: terraform import 'aws_dynamodb_table_item.pairs_hbar' 'crypto-trading-bot-pairs|pair|HBARUSDT'
+# (y análogo para NEAR/TRX/BNB). Un apply sin import crearía el ítem; con import, Terraform toma el control del documento completo.
+resource "aws_dynamodb_table_item" "pairs_hbar" {
+  table_name = aws_dynamodb_table.pairs.name
+  hash_key   = aws_dynamodb_table.pairs.hash_key
+  item = jsonencode({
+    pair                  = { S = "HBARUSDT" }
+    active                = { BOOL = false }
+    tier                  = { S = "1" }
+    sim_mode              = { S = "auto" }
+    sim_auto_enabled_at   = { S = "2026-01-01T00:00:00+00:00" }
+    sim_auto_reason       = { S = "Terraform: pair paused" }
+    auto_trade            = { BOOL = true }
+    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+  })
+}
+
+resource "aws_dynamodb_table_item" "pairs_near" {
+  table_name = aws_dynamodb_table.pairs.name
+  hash_key   = aws_dynamodb_table.pairs.hash_key
+  item = jsonencode({
+    pair                  = { S = "NEARUSDT" }
+    active                = { BOOL = false }
+    tier                  = { S = "1" }
+    sim_mode              = { S = "auto" }
+    sim_auto_enabled_at   = { S = "2026-01-01T00:00:00+00:00" }
+    sim_auto_reason       = { S = "Terraform: pair paused" }
+    auto_trade            = { BOOL = true }
+    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+  })
+}
+
+resource "aws_dynamodb_table_item" "pairs_trx" {
+  table_name = aws_dynamodb_table.pairs.name
+  hash_key   = aws_dynamodb_table.pairs.hash_key
+  item = jsonencode({
+    pair                  = { S = "TRXUSDT" }
+    active                = { BOOL = false }
+    tier                  = { S = "1" }
+    sim_mode              = { S = "auto" }
+    sim_auto_enabled_at   = { S = "2026-01-01T00:00:00+00:00" }
+    sim_auto_reason       = { S = "Terraform: pair paused" }
+    auto_trade            = { BOOL = true }
+    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+  })
+}
+
+resource "aws_dynamodb_table_item" "pairs_bnb" {
+  table_name = aws_dynamodb_table.pairs.name
+  hash_key   = aws_dynamodb_table.pairs.hash_key
+  item = jsonencode({
+    pair                  = { S = "BNBUSDT" }
+    active                = { BOOL = false }
+    tier                  = { S = "1" }
+    sim_mode              = { S = "auto" }
+    sim_auto_enabled_at   = { S = "2026-01-01T00:00:00+00:00" }
+    sim_auto_reason       = { S = "Terraform: pair paused" }
+    auto_trade            = { BOOL = true }
+    auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
+    strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
   })
 }
 
@@ -223,22 +290,22 @@ locals {
   }
 
   lambda_env = {
-    CAPITAL_TOTAL        = "1183.0"
-    BINANCE_HTTP_TIMEOUT  = "2.5"
-    RISK_PER_TRADE_PCT   = "0.05"
-    MIN_RR_RATIO         = "2.5"
-    MAX_SL_PCT           = "0.02"
-    TRAILING_ACTIVATION  = "1.0"
-    TRAILING_STEP_PCT    = "0.005"
-    ENTRY_DRIFT_MAX_PCT  = "0.003"
-    COOLDOWN_MINUTES     = "45"
-    TELEGRAM_BOT_TOKEN   = var.telegram_bot_token
-    TELEGRAM_CHAT_ID     = var.telegram_chat_id
-    BINANCE_API_KEY      = ""
-    BINANCE_SECRET       = ""
-    PAIRS_TABLE_NAME     = aws_dynamodb_table.pairs.name
-    CONFIG_TABLE_NAME    = aws_dynamodb_table.config.name
-    TRADES_TABLE_NAME    = aws_dynamodb_table.trades.name
+    CAPITAL_TOTAL                      = "1183.0"
+    BINANCE_HTTP_TIMEOUT               = "2.5"
+    RISK_PER_TRADE_PCT                 = "0.05"
+    MIN_RR_RATIO                       = "2.5"
+    MAX_SL_PCT                         = "0.02"
+    TRAILING_ACTIVATION                = "1.0"
+    TRAILING_STEP_PCT                  = "0.005"
+    ENTRY_DRIFT_MAX_PCT                = "0.003"
+    COOLDOWN_MINUTES                   = "45"
+    TELEGRAM_BOT_TOKEN                 = var.telegram_bot_token
+    TELEGRAM_CHAT_ID                   = var.telegram_chat_id
+    BINANCE_API_KEY                    = ""
+    BINANCE_SECRET                     = ""
+    PAIRS_TABLE_NAME                   = aws_dynamodb_table.pairs.name
+    CONFIG_TABLE_NAME                  = aws_dynamodb_table.config.name
+    TRADES_TABLE_NAME                  = aws_dynamodb_table.trades.name
     AUDIT_FIREHOSE_MARKET_CONTEXT      = local.audit_firehose.market_context
     AUDIT_FIREHOSE_STRATEGY_EXECUTIONS = local.audit_firehose.strategy_executions
     AUDIT_FIREHOSE_OPPORTUNITIES       = local.audit_firehose.opportunities

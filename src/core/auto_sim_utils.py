@@ -104,6 +104,8 @@ def trade_payload_from_op_data(op: dict[str, Any], sim_source: str) -> dict[str,
     size = float(op["position_size_usd"])
     ent = float(op["entry_actual_price"])
     entry_comm = size * 0.001
+    market_ctx = op.get("market_context") if isinstance(op.get("market_context"), dict) else {}
+    planned_rr = float(op.get("rr_ratio", 0) or 0)
     return {
         "pair": op["pair"],
         "strategy": op["strategy"],
@@ -115,12 +117,15 @@ def trade_payload_from_op_data(op: dict[str, Any], sim_source: str) -> dict[str,
         "tp2_price": float(op["tp2_price"]),
         "position_size_usd": size,
         "risk_usd": float(op.get("risk_usd", 0) or 0),
-        "rr_ratio": float(op.get("rr_ratio", 0) or 0),
+        "rr_ratio": planned_rr,
+        "rr_planned": planned_rr,
         "tp1_hit": False,
         "trailing_activated": False,
         "entry_commission_usd": entry_comm,
         "slippage_pct": float(op.get("drift_pct", 0) or 0),
         "sim_source": sim_source,
+        "market_trend": str(op.get("market_trend") or market_ctx.get("trend") or ""),
+        "market_volatility": str(op.get("market_volatility") or market_ctx.get("volatility") or ""),
         "max_favorable_excursion": ent,
         "max_adverse_excursion": ent,
         "opportunity_id": str(op.get("opportunity_id", "")),

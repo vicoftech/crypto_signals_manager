@@ -68,7 +68,7 @@ def handler(event, context):
                 net = float(closed.get("net_pnl_usd", 0) or 0)
                 size = float(closed.get("position_size_usd", 100) or 100)
                 pct = (net / size * 100.0) if size else 0.0
-                r_mult = float(closed.get("rr_ratio", 0) or 0)
+                r_mult = float(closed.get("r_multiple", closed.get("rr_actual", closed.get("rr_ratio", 0))) or 0)
                 ended = str(closed.get("ended_at", ""))
                 started = str(closed.get("started_at", ""))
                 dur = _dur_minutes(started, ended)

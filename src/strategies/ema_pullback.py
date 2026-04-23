@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.config import settings
 from src.core.market_context import MarketContext
 from src.strategies.base import BaseStrategy, simple_long_opportunity
 
@@ -43,6 +44,32 @@ class EMAPullbackStrategy(BaseStrategy):
         cuerpo = abs(float(vela["close"]) - float(vela["open"]))
         rango = float(vela["high"]) - float(vela["low"]) + 1e-10
         if cuerpo / rango < 0.4:
+            return None
+
+        # Filtro de volumen: evitamos pullbacks sin participación real.
+        vol_avg = float(df["volume"].rolling(20).mean().iloc[-1] or 0.0)
+        vol_now = float(df["volume"].iloc[-1] or 0.0)
+        vol_ratio = (vol_now / vol_avg) if vol_avg > 0 else 0.0
+        if vol_ratio < settings.ema_pullback_min_volume_ratio:
+            return None
+
+        # Filtro de fricción: no perseguir velas extendidas ni cierres débiles.
+        close_in_range = (
+            (float(vela["close"]) - float(vela["low"])) / rango
+            if rango > 0
+            else 0.0
+        )
+        range_pct = rango / float(vela["close"]) if float(vela["close"]) > 0 else 0.0
+        extension_pct = (
+            (float(vela["close"]) - float(ema21.iloc[-1])) / float(vela["close"])
+            if float(vela["close"]) > 0
+            else 0.0
+        )
+        if close_in_range < settings.ema_pullback_min_close_in_range:
+            return None
+        if range_pct > settings.ema_pullback_max_range_pct:
+            return None
+        if extension_pct > settings.ema_pullback_max_extension_pct:
             return None
 
         return simple_long_opportunity(pair, self.name, "30m", df, ctx, sl_lookback=3)

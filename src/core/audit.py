@@ -152,6 +152,9 @@ def log_scan_cycle(scan_id: str, metricas: dict[str, Any], duracion_ms: int) -> 
 
 def log_trade_from_row(t: dict[str, Any]) -> None:
     """Emite evento trade compatible con Glue/Athena (campos opcionales con default)."""
+    market_ctx = t.get("market_context") if isinstance(t.get("market_context"), dict) else {}
+    rr_planned = _f(t.get("rr_planned", t.get("rr_ratio")))
+    rr_actual = _f(t.get("rr_actual", t.get("r_multiple", t.get("rr_ratio"))))
     _emit_audit(
         {
             "event_type": "trade",
@@ -178,14 +181,14 @@ def log_trade_from_row(t: dict[str, Any]) -> None:
             "gross_pnl": _f(t.get("gross_pnl_usd")),
             "net_pnl": _f(t.get("net_pnl_usd")),
             "commission": _f(t.get("commission_usd")),
-            "r_multiple": _f(t.get("r_multiple")),
-            "rr_planned": _f(t.get("rr_ratio")),
-            "rr_actual": _f(t.get("rr_ratio")),
+            "r_multiple": rr_actual,
+            "rr_planned": rr_planned,
+            "rr_actual": rr_actual,
             "mfe": _f(t.get("max_favorable_excursion")),
             "mae": _f(t.get("max_adverse_excursion")),
             "duration_minutes": int(t.get("duration_minutes", 0) or 0),
-            "market_trend": str(t.get("market_trend", "")),
-            "market_volatility": str(t.get("market_volatility", "")),
+            "market_trend": str(t.get("market_trend") or market_ctx.get("trend") or ""),
+            "market_volatility": str(t.get("market_volatility") or market_ctx.get("volatility") or ""),
             "confluence": bool(t.get("confluence", False)),
             "capital_at_open": _f(t.get("capital_at_open")),
             "risk_pct": _f(t.get("risk_pct")),

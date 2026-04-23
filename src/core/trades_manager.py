@@ -103,6 +103,7 @@ class TradesManager:
             # Recalcular P&L bruto aproximado manteniendo comisiones, solo para consistencia
             gross_pnl = net_pnl + commission
         r_mult = (net_pnl / risk_usd) if risk_usd > 0 else 0.0
+        planned_rr = float(trade.get("rr_planned", trade.get("rr_ratio", 0)) or 0)
         reason_text = _close_reason_to_text(close_reason)
         self._trades[trade_id]["status"] = "CLOSED"
         self._trades[trade_id]["close_reason"] = close_reason
@@ -111,13 +112,17 @@ class TradesManager:
         self._trades[trade_id]["gross_pnl_usd"] = gross_pnl
         self._trades[trade_id]["commission_usd"] = commission
         self._trades[trade_id]["net_pnl_usd"] = net_pnl
-        self._trades[trade_id]["rr_ratio"] = r_mult
+        # Mantener RR planeado y guardar métricas reales por separado.
+        self._trades[trade_id]["rr_ratio"] = planned_rr
+        self._trades[trade_id]["rr_planned"] = planned_rr
+        self._trades[trade_id]["rr_actual"] = r_mult
+        self._trades[trade_id]["r_multiple"] = r_mult
         self._trades[trade_id]["ended_at"] = datetime.now(timezone.utc).isoformat()
         self._apply_net_pnl_to_capital(net_pnl)
         if self.table:
             self.table.update_item(
                 Key={"trade_id": trade_id},
-                UpdateExpression="SET #s=:s, close_reason=:r, close_reason_text=:rt, exit_price=:e, ended_at=:t, gross_pnl_usd=:g, commission_usd=:c, net_pnl_usd=:n, rr_ratio=:rr",
+                UpdateExpression="SET #s=:s, close_reason=:r, close_reason_text=:rt, exit_price=:e, ended_at=:t, gross_pnl_usd=:g, commission_usd=:c, net_pnl_usd=:n, rr_ratio=:rr, rr_planned=:rrp, rr_actual=:rra, r_multiple=:rm",
                 ExpressionAttributeNames={"#s": "status"},
                 ExpressionAttributeValues={
                     ":s": "CLOSED",
@@ -128,7 +133,10 @@ class TradesManager:
                     ":g": _to_dynamodb_types(gross_pnl),
                     ":c": _to_dynamodb_types(commission),
                     ":n": _to_dynamodb_types(net_pnl),
-                    ":rr": _to_dynamodb_types(r_mult),
+                    ":rr": _to_dynamodb_types(planned_rr),
+                    ":rrp": _to_dynamodb_types(planned_rr),
+                    ":rra": _to_dynamodb_types(r_mult),
+                    ":rm": _to_dynamodb_types(r_mult),
                 },
             )
         if str(trade.get("mode")) == "SIM" and trade.get("pair"):
