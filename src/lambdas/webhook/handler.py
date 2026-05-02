@@ -64,21 +64,16 @@ def _handle_command(
     pairs: "PairsManager",  # noqa: F821
     trades: "TradesManager",  # noqa: F821
 ) -> str:
-    from concurrent.futures import ThreadPoolExecutor
-
-    from src.config import settings
-    from src.core.accounting import format_accounting_block, format_accounting_line_short
-    from src.core.auto_sim_utils import calcular_pnl_circunstancial
-    from src.core.binance_client import BinanceClient
-    from src.core.capital import get_capital_snapshot
-    from src.core.indicators import enrich_dataframe
-    from src.core.market_context import MarketContextEvaluator, get_btc_context
-    from src.core.market_session import format_market_session_from_iso
-
     parts = text.strip().split()
     cmd = _normalize_cmd(parts[0])
 
     if cmd == "/contexto":
+        from concurrent.futures import ThreadPoolExecutor
+
+        from src.core.binance_client import BinanceClient
+        from src.core.indicators import enrich_dataframe
+        from src.core.market_context import MarketContextEvaluator, get_btc_context
+
         active = pairs.get_active_pairs()
         if not active:
             return "Sin pares activos"
@@ -130,6 +125,10 @@ def _handle_command(
         lines.append("Proxima evaluacion: ~5 min")
         return "\n".join(lines)
     if cmd == "/capital":
+        from src.config import settings
+        from src.core.accounting import format_accounting_block
+        from src.core.capital import get_capital_snapshot
+
         if len(parts) >= 2:
             # Solo permitir cambiar el capital inicial si no hay trades registrados
             try:
@@ -198,6 +197,12 @@ def _handle_command(
             return "Par no encontrado"
         return f"Estrategias {p.pair}\n" + "\n".join(f"- {s}" for s in p.strategies)
     if cmd == "/simular":
+        from concurrent.futures import ThreadPoolExecutor
+
+        from src.core.accounting import format_accounting_line_short
+        from src.core.auto_sim_utils import calcular_pnl_circunstancial
+        from src.core.binance_client import BinanceClient
+
         sims = trades.get_all_open_trades()
         if not sims:
             return "No hay posiciones abiertas en este momento."
@@ -254,6 +259,8 @@ def _handle_command(
             return f"✅ {par} en modo MANUAL. Recibiras senales con botones."
         return f"✅ {par} en modo DISABLED. Solo notificaciones sin simulacion."
     if cmd == "/simstatus":
+        from src.core.accounting import format_accounting_line_short
+
         rows = pairs.get_all_pairs()
         if not rows:
             return "Sin pares"
@@ -284,6 +291,8 @@ def _handle_command(
         lines.append("\n" + format_accounting_line_short())
         return "\n".join(lines)
     if cmd == "/simstats" and len(parts) >= 2:
+        from src.core.accounting import format_accounting_line_short
+
         p = pairs.get_pair(parts[1])
         if not p:
             return "Par no encontrado"
@@ -313,6 +322,8 @@ def _handle_command(
         trades.close_trade(trade["trade_id"], "MANUAL", exit_price)
         return f"Operacion REAL confirmada/cerrada: {trade['trade_id']}"
     if cmd == "/historial":
+        from src.core.accounting import format_accounting_line_short
+
         rows = trades.list_recent_closed(limit=20)
         if not rows:
             return "Sin operaciones cerradas todavia"
@@ -327,6 +338,8 @@ def _handle_command(
             + format_accounting_line_short()
         )
     if cmd == "/resumen":
+        from src.core.accounting import format_accounting_line_short
+
         s = trades.get_summary()
         open_count = len(trades.list_open())
         return (
@@ -339,6 +352,8 @@ def _handle_command(
             f"{format_accounting_line_short()}"
         )
     if cmd == "/rendimiento":
+        from src.core.accounting import format_accounting_line_short
+
         s = trades.get_summary()
         winrate = (s["wins"] / s["closed"] * 100.0) if s["closed"] else 0.0
         return (
@@ -349,6 +364,8 @@ def _handle_command(
             f"{format_accounting_line_short()}"
         )
     if cmd == "/operacion" and len(parts) >= 2:
+        from src.core.market_session import format_market_session_from_iso
+
         t = trades.get_trade(parts[1].strip())
         if not t:
             return "Operacion no encontrada"
@@ -531,8 +548,8 @@ def handler(event, context):
         body = base64.b64decode(body).decode("utf-8")
     update = json.loads(body) if isinstance(body, str) else body
     if update.get("callback_query"):
-        _queue_deferred(update)
-        return {"statusCode": 200, "body": json.dumps({"ok": True, "queued": True})}
+        _process_telegram_update(update)
+        return {"statusCode": 200, "body": json.dumps({"ok": True, "response": "sync"})}
     message = update.get("message") or {}
     text = (message.get("text") or "")
     if not text or not str(text).strip().startswith("/"):
@@ -542,8 +559,10 @@ def handler(event, context):
     if not parts:
         return {"statusCode": 200, "body": json.dumps({"ok": True, "ignored": True})}
     cmd = _normalize_cmd(parts[0])
-    if cmd in ("/menu", "/help", "/status"):
-        _process_telegram_update(update)
-        return {"statusCode": 200, "body": json.dumps({"ok": True, "response": "sync"})}
-    _queue_deferred(update)
-    return {"statusCode": 200, "body": json.dumps({"ok": True, "queued": True})}
+    # Solo /contexto se delega async: muchas llamadas a Binance (riesgo >30s en API GW).
+    # El resto corre en esta invocacion y evita un segundo cold start + round-trip invoke.
+    if cmd == "/contexto":
+        _queue_deferred(update)
+        return {"statusCode": 200, "body": json.dumps({"ok": True, "queued": True})}
+    _process_telegram_update(update)
+    return {"statusCode": 200, "body": json.dumps({"ok": True, "response": "sync"})}
