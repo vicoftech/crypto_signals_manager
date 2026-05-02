@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -29,11 +30,6 @@ class TradesManager:
 
     def _invalidate_trade_list_cache(self) -> None:
         self._list_cache = None
-
-    def _in_accounting_window(self, trade: dict) -> bool:
-        from src.core.accounting import get_accounting_epoch_iso, trade_in_accounting_window
-
-        return trade_in_accounting_window(trade, get_accounting_epoch_iso())
 
     def open_trade(self, payload: dict, mode: str) -> str:
         trade_id = str(uuid4())
@@ -184,13 +180,41 @@ class TradesManager:
         return sorted(items, key=lambda x: str(x.get("started_at", "")), reverse=True)
 
     def list_recent_closed(self, limit: int = 20) -> list[dict]:
+        from src.core.accounting import get_accounting_epoch_iso, trade_in_accounting_window
+
+        epoch = get_accounting_epoch_iso()
         items = [
             t
             for t in self.list_trades()
-            if t.get("status") == "CLOSED" and self._in_accounting_window(t)
+            if t.get("status") == "CLOSED" and trade_in_accounting_window(t, epoch)
         ]
         items = sorted(items, key=lambda x: str(x.get("ended_at", "")), reverse=True)
         return items[:limit]
+
+    def _scan_table_segments(self, total_segments: int) -> list[dict]:
+        """Scan completo usando Segment/TotalSegments en paralelo (menos tiempo con tablas grandes)."""
+        tbl = self.table
+        if tbl is None:
+            return []
+
+        def segment_items(seg: int) -> list[dict]:
+            acc: list[dict] = []
+            kwargs: dict = {"Segment": seg, "TotalSegments": total_segments}
+            while True:
+                resp = tbl.scan(**kwargs)
+                acc.extend(resp.get("Items") or [])
+                lek = resp.get("LastEvaluatedKey")
+                if not lek:
+                    break
+                kwargs = {"Segment": seg, "TotalSegments": total_segments, "ExclusiveStartKey": lek}
+            return acc
+
+        if total_segments <= 1:
+            return segment_items(0)
+
+        with ThreadPoolExecutor(max_workers=total_segments) as ex:
+            parts = list(ex.map(segment_items, range(total_segments)))
+        return [row for part in parts for row in part]
 
     def list_trades(self) -> list[dict]:
         if self._list_cache is not None:
@@ -198,25 +222,22 @@ class TradesManager:
         if not self.table:
             self._list_cache = list(self._trades.values())
             return self._list_cache
-        items: list[dict] = []
-        scan_kwargs: dict = {}
-        while True:
-            resp = self.table.scan(**scan_kwargs)
-            items.extend(resp.get("Items") or [])
-            lek = resp.get("LastEvaluatedKey")
-            if not lek:
-                break
-            scan_kwargs["ExclusiveStartKey"] = lek
-        self._list_cache = items
+        segments = max(1, min(16, int(os.getenv("TRADES_SCAN_SEGMENTS", "8") or "8")))
+        self._list_cache = self._scan_table_segments(segments)
         return self._list_cache
 
     def get_summary(self) -> dict:
         """
         Cerradas: cohorte post accounting_epoch (si config). Abiertas: siempre.
         """
+        from src.core.accounting import get_accounting_epoch_iso, trade_in_accounting_window
+
+        epoch = get_accounting_epoch_iso()
         all_t = self.list_trades()
         opens = [t for t in all_t if t.get("status") == "OPEN"]
-        closed = [t for t in all_t if t.get("status") == "CLOSED" and self._in_accounting_window(t)]
+        closed = [
+            t for t in all_t if t.get("status") == "CLOSED" and trade_in_accounting_window(t, epoch)
+        ]
         items = opens + closed
         total = len(items)
         wins = len([t for t in closed if float(t.get("net_pnl_usd", 0) or 0) > 0])
@@ -225,7 +246,14 @@ class TradesManager:
             "REAL": len([t for t in items if t.get("mode") == "REAL"]),
             "SIM": len([t for t in items if t.get("mode") == "SIM"]),
         }
-        return {"total": total, "closed": len(closed), "wins": wins, "net_pnl": net, "by_mode": by_mode}
+        return {
+            "total": total,
+            "open_count": len(opens),
+            "closed": len(closed),
+            "wins": wins,
+            "net_pnl": net,
+            "by_mode": by_mode,
+        }
 
     def find_open_real_by_pair(self, pair: str) -> dict | None:
         normalized = pair.upper().strip()

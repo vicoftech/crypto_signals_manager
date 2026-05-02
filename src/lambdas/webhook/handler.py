@@ -341,11 +341,10 @@ def _handle_command(
         from src.core.accounting import format_accounting_line_short
 
         s = trades.get_summary()
-        open_count = len(trades.list_open())
         return (
             "Resumen operativo (abiertas = todas; cierres y P&L neto = cohorte post-corte en config)\n"
             f"- total (abiertas + cierres cohorte): {s['total']}\n"
-            f"- abiertas: {open_count}\n"
+            f"- abiertas: {s['open_count']}\n"
             f"- cerradas (cohorte): {s['closed']}\n"
             f"- REAL: {s['by_mode']['REAL']} | SIM: {s['by_mode']['SIM']}\n"
             f"- neto acumulado (solo cierres cohorte): {s['net_pnl']:+.2f} USD\n\n"
