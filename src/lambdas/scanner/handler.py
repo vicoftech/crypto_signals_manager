@@ -37,6 +37,7 @@ config_store = ConfigStore()
 
 
 def handler(event, context):
+    trades.reset_trade_list_cache()
     if config_store.is_paused():
         logger.info("scanner paused")
         telegram.send_trade_update("Scanner pausado: no se ejecuto busqueda de oportunidades.")

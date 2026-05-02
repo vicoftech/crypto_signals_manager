@@ -29,7 +29,7 @@ class CapitalSnapshot:
         }
 
 
-def get_capital_snapshot() -> CapitalSnapshot:
+def get_capital_snapshot(trades_mgr: TradesManager | None = None) -> CapitalSnapshot:
     """
     Calcula un snapshot de capital a partir de ConfigTable y TradesTable.
 
@@ -40,7 +40,7 @@ def get_capital_snapshot() -> CapitalSnapshot:
     - capital_disponible: capital_total - capital_bloqueado
     """
     config = ConfigStore()
-    trades = TradesManager()
+    trades = trades_mgr if trades_mgr is not None else TradesManager()
 
     # capital_inicial: usamos una clave dedicada si existe, si no, el valor inicial de settings
     capital_inicial = config.get_number("capital_inicial", settings.capital_total)

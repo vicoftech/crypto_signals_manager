@@ -355,10 +355,31 @@ resource "aws_lambda_function" "webhook" {
   s3_bucket        = var.artifact_bucket
   s3_key           = aws_s3_object.lambda_bundle.key
   source_code_hash = filebase64sha256(var.lambda_zip_path)
-  # API GW limita ~30s en la llamada inicial; el trabajo pesado corre en segunda invocacion async (mismo timeout).
+  # API GW HTTP integration ~29s corta antes que esta Lambda → Telegram retries ~60s. URL publica permite timeout completo (120).
   timeout          = 120
   memory_size      = 256
   environment { variables = local.lambda_env }
+}
+
+resource "aws_lambda_function_url" "webhook_public" {
+  function_name      = aws_lambda_function.webhook.function_name
+  authorization_type = "NONE"
+
+  cors {
+    allow_credentials = false
+    allow_origins     = ["*"]
+    allow_methods     = ["*"]
+    allow_headers     = ["*"]
+    max_age           = 0
+  }
+}
+
+resource "aws_lambda_permission" "webhook_function_url_public" {
+  statement_id           = "AllowWebhookFunctionURLInvoke"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.webhook.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
 }
 
 resource "aws_lambda_function" "binance_events" {
@@ -505,6 +526,17 @@ output "scanner_lambda_name" {
   value = aws_lambda_function.scanner.function_name
 }
 
-output "webhook_url" {
+# Preferir Lambda Function URL en setWebhook de Telegram (no limita integration a ~29s como API GW HTTP).
+output "webhook_lambda_function_url" {
+  value = "${trimsuffix(aws_lambda_function_url.webhook_public.function_url, "/")}/"
+}
+
+# Legacy: ejecuta-api tiene tope integration ~29s; puede fallar y generar retries si el handler tarda más.
+output "webhook_apigateway_url" {
   value = "${trimsuffix(aws_apigatewayv2_stage.webhook_stage.invoke_url, "/")}/webhook"
+}
+
+output "webhook_url" {
+  description = "URL recomendada (Lambda Function URL; misma compatibilidad de payload tipo HTTP API v2)"
+  value       = "${trimsuffix(aws_lambda_function_url.webhook_public.function_url, "/")}/"
 }

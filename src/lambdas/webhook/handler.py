@@ -136,7 +136,7 @@ def _handle_command(
             except ValueError:
                 return "Formato invalido. Usa /capital 1183.50"
             if trades.list_trades():
-                snap = get_capital_snapshot().as_dict()
+                snap = get_capital_snapshot(trades).as_dict()
                 return (
                     "❌ No se puede cambiar el capital inicial con operaciones ya registradas.\n"
                     f"Capital inicial actual: {snap['capital_inicial']:.2f}\n"
@@ -146,7 +146,7 @@ def _handle_command(
             config.set_number("capital_inicial", nuevo)
             config.set_capital(nuevo)
             return f"Capital inicial actualizado a {nuevo:.2f}"
-        cap = get_capital_snapshot().as_dict()
+        cap = get_capital_snapshot(trades).as_dict()
         pnl_emoji = "📈" if cap["pnl_cerrado"] >= 0 else "📉"
         dd_text = (
             f"⚠️ Drawdown: {cap['drawdown_actual']:.1%}"
@@ -466,6 +466,27 @@ def _reason_text_from_code(code: str | None) -> str:
     return mapping.get(normalized, f"Cierre por {normalized or 'motivo no informado'}")
 
 
+def _request_domain_from_event(event: dict) -> str:
+    rc = event.get("requestContext") or {}
+    d = rc.get("domainName")
+    if isinstance(d, str):
+        return d
+    http_rc = rc.get("http") or {}
+    h = http_rc.get("domainName")
+    return str(h or "")
+
+
+def _webhook_integration_allows_long_sync(event: dict) -> bool:
+    """
+    API Gateway HTTP API corta integration ~29s → trabajo largo dispara errores/Telegram retry (~60s).
+    Lambda Function URL permite hasta timeout de la funcion; self-invokes async sin shape de API GW
+    igualmente necesitan ejecutar trabajo completo en la segunda invocation.
+    """
+    if event.get("webhook_deferred"):
+        return True
+    return ".lambda-url." in _request_domain_from_event(event)
+
+
 def _queue_deferred(telegram_update: dict) -> None:
     """
     Responde rapido a API Gateway (limite ~30s). El trabajo largo se ejecuta en otra
@@ -559,9 +580,9 @@ def handler(event, context):
     if not parts:
         return {"statusCode": 200, "body": json.dumps({"ok": True, "ignored": True})}
     cmd = _normalize_cmd(parts[0])
-    # Solo /contexto se delega async: muchas llamadas a Binance (riesgo >30s en API GW).
-    # El resto corre en esta invocacion y evita un segundo cold start + round-trip invoke.
-    if cmd == "/contexto":
+    # Solo /contexto desde API GW se delega: Binance+pandas puede pasar los ~29s de integracion;
+    # con Lambda Function URL (u otras integraciones mas largas) evitamos doble invocacion.
+    if cmd == "/contexto" and not _webhook_integration_allows_long_sync(event):
         _queue_deferred(update)
         return {"statusCode": 200, "body": json.dumps({"ok": True, "queued": True})}
     _process_telegram_update(update)

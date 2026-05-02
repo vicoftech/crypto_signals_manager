@@ -20,6 +20,15 @@ class TradesManager:
         self.table = boto3.resource("dynamodb").Table(self.table_name) if self.table_name else None
         self.config_table = boto3.resource("dynamodb").Table(self.config_table_name) if self.config_table_name else None
         self._trades: dict[str, dict] = {}
+        # Cache Dynamo scan/read within one invocation (cleared at Lambda entry where we reuse a singleton).
+        self._list_cache: list[dict] | None = None
+
+    def reset_trade_list_cache(self) -> None:
+        """Llamar al inicio del handler cuando se usa un TradesManager singleton entre invocations."""
+        self._list_cache = None
+
+    def _invalidate_trade_list_cache(self) -> None:
+        self._list_cache = None
 
     def _in_accounting_window(self, trade: dict) -> bool:
         from src.core.accounting import get_accounting_epoch_iso, trade_in_accounting_window
@@ -40,6 +49,7 @@ class TradesManager:
         if self.table:
             self.table.put_item(Item=_to_dynamodb_types(row))
         self._trades[trade_id] = row
+        self._invalidate_trade_list_cache()
         return trade_id
 
     def update_trade(self, trade_id: str, updates: dict) -> None:
@@ -64,6 +74,7 @@ class TradesManager:
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
             )
+        self._invalidate_trade_list_cache()
 
     def get_trade(self, trade_id: str) -> dict | None:
         if self.table:
@@ -139,6 +150,7 @@ class TradesManager:
                     ":rm": _to_dynamodb_types(r_mult),
                 },
             )
+        self._invalidate_trade_list_cache()
         if str(trade.get("mode")) == "SIM" and trade.get("pair"):
             try:
                 from src.core.pairs_manager import PairsManager
@@ -181,9 +193,22 @@ class TradesManager:
         return items[:limit]
 
     def list_trades(self) -> list[dict]:
-        if self.table:
-            return self.table.scan().get("Items", [])
-        return list(self._trades.values())
+        if self._list_cache is not None:
+            return self._list_cache
+        if not self.table:
+            self._list_cache = list(self._trades.values())
+            return self._list_cache
+        items: list[dict] = []
+        scan_kwargs: dict = {}
+        while True:
+            resp = self.table.scan(**scan_kwargs)
+            items.extend(resp.get("Items") or [])
+            lek = resp.get("LastEvaluatedKey")
+            if not lek:
+                break
+            scan_kwargs["ExclusiveStartKey"] = lek
+        self._list_cache = items
+        return self._list_cache
 
     def get_summary(self) -> dict:
         """

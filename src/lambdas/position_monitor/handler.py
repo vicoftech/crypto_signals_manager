@@ -35,6 +35,7 @@ def _dur_minutes(started: str, ended: str) -> int:
 
 
 def handler(event, context):
+    trades.reset_trade_list_cache()
     for _ in range(2):
         for trade in trades.get_open_sims():
             price = binance.get_price(trade["pair"])
