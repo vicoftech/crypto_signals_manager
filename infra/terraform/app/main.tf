@@ -382,6 +382,14 @@ resource "aws_lambda_permission" "webhook_function_url_public" {
   function_url_auth_type = "NONE"
 }
 
+# Function URL también requiere lambda:InvokeFunction para origen público (sin esto Telegram ve 403).
+resource "aws_lambda_permission" "webhook_function_public_invoke" {
+  statement_id  = "AllowWebhookPublicInvokeFunction"
+  action          = "lambda:InvokeFunction"
+  function_name   = aws_lambda_function.webhook.function_name
+  principal       = "*"
+}
+
 resource "aws_lambda_function" "binance_events" {
   function_name    = "crypto-trading-bot-binance-events"
   role             = aws_iam_role.lambda_exec.arn
