@@ -82,8 +82,9 @@ def _handle_command(
         active = pairs.get_active_pairs()
         if not active:
             return "Sin pares activos"
-        scan_id = "webhook-contexto"
-        btc_ctx = get_btc_context(scan_id)
+        # Cache BTC por ciclo comando; scan_id=None en evaluate para no disparar auditoría/Firehose
+        # por cada alt (eso bloqueaba la Lambda hasta timeout con reintentos de red).
+        btc_ctx = get_btc_context("webhook-contexto")
         btc_icon = {"BULLISH": "🟢", "SIDEWAYS": "🟡", "BEARISH": "🔴"}.get(btc_ctx.trend, "⚪")
         lines = [
             f"{btc_icon} BTC GLOBAL: {btc_ctx.trend} | {btc_ctx.volatility}",
@@ -102,7 +103,7 @@ def _handle_command(
             try:
                 df = enrich_dataframe(BinanceClient().get_klines_df(pair, "30m", 60))
                 ctx = MarketContextEvaluator.evaluate(
-                    df, pair, scan_id=scan_id, pair_config={"tier": pc.tier}
+                    df, pair, scan_id=None, pair_config={"tier": pc.tier}
                 )
             except Exception:
                 return f"⚪ {pair:<10} ERROR obteniendo contexto"

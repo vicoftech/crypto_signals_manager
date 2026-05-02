@@ -355,8 +355,8 @@ resource "aws_lambda_function" "webhook" {
   s3_bucket        = var.artifact_bucket
   s3_key           = aws_s3_object.lambda_bundle.key
   source_code_hash = filebase64sha256(var.lambda_zip_path)
-  # API Gateway max ~30s; el handler responde 200 y delega a invoke async, que puede ir hasta 60s.
-  timeout          = 60
+  # API GW limita ~30s en la llamada inicial; el trabajo pesado corre en segunda invocacion async (mismo timeout).
+  timeout          = 120
   memory_size      = 256
   environment { variables = local.lambda_env }
 }
