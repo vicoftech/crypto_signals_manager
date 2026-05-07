@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 import os
-import time
+import uuid
 
 import requests
 
@@ -516,16 +516,18 @@ def _handle_callback(callback_query: dict) -> str:
         "max_adverse_excursion": entry_price,
     }
     if action == "ENTER":
+        trade_id = str(uuid.uuid4())
         client = BinanceClient(
             api_key=os.getenv("BINANCE_API_KEY"),
             api_secret=os.getenv("BINANCE_SECRET"),
         )
-        client_order_id = f"bot-{pair.lower()}-{int(time.time())}"[:32]
-        order = client.place_market_buy(pair=pair, quote_qty_usd=size, new_client_order_id=client_order_id)
+        order = client.place_market_buy(
+            pair=pair, quote_qty_usd=size, new_client_order_id=trade_id
+        )
         fills = order.get("fills") or []
         first_fill = fills[0] if fills else {}
         payload["binance_order_id"] = str(order.get("orderId", ""))
-        payload["binance_client_order_id"] = str(order.get("clientOrderId", client_order_id))
+        payload["binance_client_order_id"] = str(order.get("clientOrderId", trade_id))
         payload["entry_price"] = float(order.get("cummulativeQuoteQty", 0) or 0) / max(
             float(order.get("executedQty", 0) or 1),
             1e-9,
@@ -533,7 +535,9 @@ def _handle_callback(callback_query: dict) -> str:
         payload["position_size_usd"] = float(order.get("cummulativeQuoteQty", size) or size)
         payload["entry_commission_usd"] = float(first_fill.get("commission", payload["entry_commission_usd"]) or 0)
         payload["entry_order_status"] = str(order.get("status", ""))
-    trade_id = trades.open_trade(payload, mode=mode)
+        trade_id = trades.open_trade(payload, mode=mode, trade_id=trade_id)
+    else:
+        trade_id = trades.open_trade(payload, mode=mode)
     label = "Orden LIVE enviada" if action == "ENTER" else "Simulacion iniciada"
     return f"{label}\n{pair} | {strategy}\nmode: {mode}\ntrade_id: {trade_id}"
 

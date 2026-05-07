@@ -32,8 +32,8 @@ class TradesManager:
     def _invalidate_trade_list_cache(self) -> None:
         self._list_cache = None
 
-    def open_trade(self, payload: dict, mode: str) -> str:
-        trade_id = str(uuid4())
+    def open_trade(self, payload: dict, mode: str, trade_id: str | None = None) -> str:
+        trade_id = trade_id or str(uuid4())
         started = datetime.now(timezone.utc)
         normalized_mode = normalize_mode(mode)
         row = {
