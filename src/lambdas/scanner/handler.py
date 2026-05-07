@@ -19,7 +19,7 @@ from src.core.auto_sim_utils import (
 )
 from src.core.pairs_manager import PairsManager
 from src.core.state import CooldownState
-from src.core.telegram_client import TelegramClient, format_sim_progress_message
+from src.core.telegram_client import TelegramClient
 from src.core.trades_manager import TradesManager
 from src.core.audit import log_opportunity, log_scan_cycle, log_strategy_execution
 from src.core.accounting import format_accounting_line_short
@@ -132,7 +132,7 @@ def handler(event, context):
                         )
                         continue
                     payload = trade_payload_from_op_data(op_adj, "auto_scanner")
-                    trades.open_trade(payload, "SIM")
+                    trades.open_trade(payload, "simulation")
                     telegram.send_auto_sim_opened(op_adj)
                     log_opportunity(scan_id, op_adj)
                     log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
@@ -175,22 +175,27 @@ def handler(event, context):
     agg_errors += errors
 
     if batch_count >= 3:
-        open_sims = trades.get_all_open_trades()
-        if open_sims:
-            prog_lines: list[str] = []
-            for t in open_sims:
-                try:
-                    px = binance.get_price(str(t.get("pair", "")))
-                    prog_lines.append(format_sim_progress_message(t, float(px)))
-                except Exception:
-                    logger.exception("format sim progress failed for %s", t.get("pair"))
+        from src.core.mode import current_live_mode
+
+        mode = current_live_mode()
+        open_mode_trades = trades.list_open(mode=mode)
+        if open_mode_trades:
+            lines = [
+                (
+                    f"- {t.get('pair')} | {t.get('strategy')} | "
+                    f"id={t.get('trade_id')} | desde={str(t.get('started_at', ''))[:16]}"
+                )
+                for t in open_mode_trades[:8]
+            ]
+            if len(open_mode_trades) > 8:
+                lines.append(f"... y {len(open_mode_trades) - 8} mas")
             pos_section = (
                 "\n\n────────\n"
-                "📌 POSICIONES SIM (check con este resumen / ~15 min)\n\n"
-                + "\n\n".join(prog_lines)
+                f"📌 POSICIONES ABIERTAS ({mode})\n\n"
+                + "\n".join(lines)
             )
         else:
-            pos_section = "\n\n📌 Posiciones SIM abiertas: ninguna."
+            pos_section = f"\n\n📌 Posiciones abiertas ({mode}): ninguna."
 
         summary = (
             "Resumen scanner (ultimos 3 escaneos)\n"

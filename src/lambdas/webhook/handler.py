@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import time
 
 import requests
 
@@ -12,19 +13,19 @@ COMMANDS_HELP = {
     "/status": "Estado actual del bot (pausa, capital, riesgo).",
     "/contexto": "Lista pares activos y estado operativo.",
     "/capital <monto>": "Actualiza capital total usado por el bot.",
-    "/riesgo <pct>": "Actualiza riesgo por trade (max 10%).",
+    "/riesgo": "Muestra riesgo actual; /riesgo <pct> lo actualiza (max 10%).",
     "/pausar": "Pausa el scanner de oportunidades.",
     "/reanudar": "Reanuda el scanner.",
     "/pares": "Lista todos los pares configurados.",
     "/agregar <PAR>": "Agrega un nuevo par (ej: SOLUSDT).",
     "/pausarpar <PAR>": "Pausa un par puntual.",
     "/activarpar <PAR>": "Reactiva un par puntual.",
-    "/estrategias <PAR>": "Muestra estrategias habilitadas para el par.",
+    "/estrategias [PAR]": "Sin PAR muestra ayuda; con PAR muestra estrategias habilitadas.",
     "/simular": "Posiciones SIM abiertas con P&L circunstancial.",
     "/simconfig <PAR> <manual|auto|disabled>": "Modo de simulacion por par.",
     "/simstatus": "Modo y stats de sim por par.",
     "/simstats <PAR>": "Stats de simulacion de un par.",
-    "/confirmado <PAR>": "Cierra operacion REAL abierta del par como MANUAL.",
+    "/confirmado <PAR>": "Cierra operacion LIVE abierta del par como MANUAL.",
     "/historial": "Ultimas 20 cierres (cohorte post-corte en config) con P&L.",
     "/resumen": "Abiertas (todas) + cierres y P&L agregado desde corte (config) si aplica.",
     "/rendimiento": "Winrate y P&L de cierres de la cohorte (post-corte en config) si aplica.",
@@ -64,8 +65,28 @@ def _handle_command(
     pairs: "PairsManager",  # noqa: F821
     trades: "TradesManager",  # noqa: F821
 ) -> str:
+    def _parse_risk_input(raw: str) -> float:
+        """
+        Acepta:
+        - "/riesgo 0.5"   -> 0.5%  => 0.005
+        - "/riesgo 0.5%"  -> 0.5%  => 0.005
+        - "/riesgo 0.005" -> ratio => 0.005
+        - "/riesgo 5"     -> 5%    => 0.05
+        """
+        s = (raw or "").strip().replace(",", ".")
+        has_pct = s.endswith("%")
+        if has_pct:
+            s = s[:-1].strip()
+        val = float(s)
+        if val <= 0:
+            raise ValueError("risk must be positive")
+        pct = (val / 100.0) if (has_pct or val >= 1.0) else val
+        return min(pct, 0.10)
+
     parts = text.strip().split()
     cmd = _normalize_cmd(parts[0])
+    if cmd == "/reisgo":
+        cmd = "/riesgo"
 
     if cmd == "/contexto":
         from concurrent.futures import ThreadPoolExecutor
@@ -128,6 +149,7 @@ def _handle_command(
         from src.config import settings
         from src.core.accounting import format_accounting_block
         from src.core.capital import get_capital_snapshot
+        from src.core.mode import current_live_mode, is_live_mode
 
         if len(parts) >= 2:
             # Solo permitir cambiar el capital inicial si no hay trades registrados
@@ -146,14 +168,26 @@ def _handle_command(
             config.set_number("capital_inicial", nuevo)
             config.set_capital(nuevo)
             return f"Capital inicial actualizado a {nuevo:.2f}"
-        cap = get_capital_snapshot(trades).as_dict()
+        mode = current_live_mode()
+        cap = get_capital_snapshot(trades, mode=mode).as_dict()
         pnl_emoji = "📈" if cap["pnl_cerrado"] >= 0 else "📉"
         dd_text = (
             f"⚠️ Drawdown: {cap['drawdown_actual']:.1%}"
             if cap["drawdown_actual"] > 0
             else "✅ Sin drawdown"
         )
-        riesgo_prox = cap["capital_total"] * settings.risk_per_trade_pct
+        risk_pct = config.get_risk_pct(settings.risk_per_trade_pct)
+        riesgo_prox = cap["capital_disponible"] * risk_pct
+        if is_live_mode(mode):
+            return (
+                f"💼 CAPITAL BINANCE ({mode.upper()})\n\n"
+                f"{pnl_emoji} P&L Binance:      ${cap['pnl_cerrado']:+,.2f}\n"
+                f"✅ Disponible:        ${cap['capital_disponible']:,.2f}\n"
+                f"🔒 Bloqueado:         ${cap['capital_bloqueado']:,.2f}\n"
+                f"📊 Total cuenta:      ${cap['capital_total']:,.2f}\n\n"
+                f"{dd_text}\n"
+                f"Riesgo proxima op:    ${riesgo_prox:,.2f}  ({risk_pct*100:.3f}%)"
+            )
         return (
             "💼 ESTADO DEL CAPITAL SIMULADO\n\n"
             f"💰 Capital inicial:    ${cap['capital_inicial']:,.2f}\n"
@@ -163,13 +197,27 @@ def _handle_command(
             f"🔒 Bloqueado ({cap['posiciones_abiertas']} ops): -${cap['capital_bloqueado']:,.2f}\n"
             f"✅ Disponible:         ${cap['capital_disponible']:,.2f}\n\n"
             f"{dd_text}\n"
-            f"Riesgo proxima op:    ${riesgo_prox:,.2f}  ({settings.risk_per_trade_pct*100:.1f}%)\n\n"
+            f"Riesgo proxima op:    ${riesgo_prox:,.2f}  ({risk_pct*100:.3f}%)\n\n"
             f"{format_accounting_block()}"
         )
-    if cmd == "/riesgo" and len(parts) >= 2:
-        pct = min(float(parts[1]) / 100.0, 0.10)
-        config.set_risk_pct(pct)
-        return f"Riesgo actualizado a {pct * 100:.1f}%"
+    if cmd == "/riesgo":
+        from src.config import settings
+
+        if len(parts) >= 2:
+            try:
+                pct = _parse_risk_input(parts[1])
+            except ValueError:
+                return (
+                    "Formato invalido. Ejemplos: /riesgo 0.5  |  /riesgo 0.5%  |  /riesgo 0.005"
+                )
+            config.set_risk_pct(pct)
+            return f"Riesgo actualizado a {pct * 100:.3f}%"
+        current = config.get_risk_pct(settings.risk_per_trade_pct)
+        return (
+            "Riesgo configurado:\n"
+            f"- pct: {current * 100:.3f}%\n"
+            "Para cambiar: /riesgo 0.5  |  /riesgo 0.5%  |  /riesgo 0.005  (max 10%)"
+        )
     if cmd == "/pausar":
         config.set_paused(True)
         return "Scanner pausado"
@@ -191,11 +239,24 @@ def _handle_command(
     if cmd == "/activarpar" and len(parts) >= 2:
         ok = pairs.set_active(parts[1], True)
         return f"Par activado: {parts[1].upper()}" if ok else "Par no encontrado"
-    if cmd == "/estrategias" and len(parts) >= 2:
-        p = pairs.get_pair(parts[1])
-        if not p:
-            return "Par no encontrado"
-        return f"Estrategias {p.pair}\n" + "\n".join(f"- {s}" for s in p.strategies)
+    if cmd == "/estrategias":
+        if len(parts) >= 2:
+            p = pairs.get_pair(parts[1])
+            if not p:
+                return "Par no encontrado"
+            return f"Estrategias {p.pair}\n" + "\n".join(f"- {s}" for s in p.strategies)
+        all_pairs = pairs.get_all_pairs()
+        if not all_pairs:
+            return "Sin pares configurados. Usa /agregar <PAR>."
+        ejemplo = all_pairs[0].pair
+        pares = ", ".join(p.pair for p in all_pairs[:8])
+        if len(all_pairs) > 8:
+            pares += ", ..."
+        return (
+            "Uso: /estrategias <PAR>\n"
+            f"Ejemplo: /estrategias {ejemplo}\n"
+            f"Pares disponibles: {pares}"
+        )
     if cmd == "/simular":
         from concurrent.futures import ThreadPoolExecutor
 
@@ -317,46 +378,52 @@ def _handle_command(
     if cmd == "/confirmado" and len(parts) >= 2:
         trade = trades.find_open_real_by_pair(parts[1])
         if not trade:
-            return "No hay operacion REAL abierta para ese par"
+            return "No hay operacion LIVE abierta para ese par"
         exit_price = float(trade.get("entry_price", 0) or 0)
         trades.close_trade(trade["trade_id"], "MANUAL", exit_price)
-        return f"Operacion REAL confirmada/cerrada: {trade['trade_id']}"
+        return f"Operacion LIVE confirmada/cerrada: {trade['trade_id']}"
     if cmd == "/historial":
         from src.core.accounting import format_accounting_line_short
+        from src.core.mode import current_live_mode
 
-        rows = trades.list_recent_closed(limit=20)
+        mode = current_live_mode()
+        rows = trades.list_recent_closed(limit=20, mode=mode)
         if not rows:
-            return "Sin operaciones cerradas todavia"
+            return f"Sin operaciones cerradas todavia para modo {mode}"
         lines = [
             f"id={t.get('trade_id')} | {t.get('pair')} | {t.get('mode')} | {t.get('close_reason')} | net={float(t.get('net_pnl_usd', 0) or 0):+.2f}"
             for t in rows
         ]
         return (
-            "Historial (ultimas 20 cierres en cohorte de contabilidad)\n"
+            f"Historial ({mode}, ultimas 20 cierres en cohorte de contabilidad)\n"
             + "\n".join(lines)
             + "\n\n"
             + format_accounting_line_short()
         )
     if cmd == "/resumen":
         from src.core.accounting import format_accounting_line_short
+        from src.core.mode import current_live_mode
 
-        s = trades.get_summary()
+        mode = current_live_mode()
+        s = trades.get_summary(mode=mode)
         return (
-            "Resumen operativo (abiertas = todas; cierres y P&L neto = cohorte post-corte en config)\n"
+            f"Resumen operativo ({mode}; cierres y P&L neto = cohorte post-corte en config)\n"
             f"- total (abiertas + cierres cohorte): {s['total']}\n"
             f"- abiertas: {s['open_count']}\n"
             f"- cerradas (cohorte): {s['closed']}\n"
-            f"- REAL: {s['by_mode']['REAL']} | SIM: {s['by_mode']['SIM']}\n"
+            f"- live: {s['by_mode']['live']} | live_test: {s['by_mode']['live_test']} | simulation: {s['by_mode']['simulation']}\n"
             f"- neto acumulado (solo cierres cohorte): {s['net_pnl']:+.2f} USD\n\n"
             f"{format_accounting_line_short()}"
         )
     if cmd == "/rendimiento":
         from src.core.accounting import format_accounting_line_short
+        from src.core.mode import current_live_mode
 
-        s = trades.get_summary()
+        mode = current_live_mode()
+        s = trades.get_summary(mode=mode)
         winrate = (s["wins"] / s["closed"] * 100.0) if s["closed"] else 0.0
         return (
-            "Rendimiento (solo cierres de la cohorte; ver accounting_epoch en config)\n"
+            f"Rendimiento ({mode}; solo cierres de la cohorte; ver accounting_epoch en config)\n"
             f"- operaciones cerradas: {s['closed']}\n"
             f"- winrate: {winrate:.1f}%\n"
             f"- P&L neto: {s['net_pnl']:+.2f} USD\n\n"
@@ -405,6 +472,8 @@ def _handle_command(
 
 def _handle_callback(callback_query: dict) -> str:
     from src.config import binance_credentials_configured, settings
+    from src.core.binance_client import BinanceClient
+    from src.core.mode import MODE_SIMULATION, current_live_mode
     from src.core.trades_manager import TradesManager
 
     data = callback_query.get("data", "")
@@ -423,33 +492,50 @@ def _handle_callback(callback_query: dict) -> str:
         )
 
     trades = TradesManager()
-    mode = "REAL" if action == "ENTER" else "SIM"
+    mode = current_live_mode() if action == "ENTER" else MODE_SIMULATION
     entry_price = float(entry)
     sl_price = entry_price * 0.99
     tp1_price = entry_price * 1.01
     tp2_price = entry_price * 1.02
     size = 100.0
-    trade_id = trades.open_trade(
-        {
-            "pair": pair,
-            "strategy": strategy,
-            "entry_price": entry_price,
-            "sl_price": sl_price,
-            "tp1_price": tp1_price,
-            "tp2_price": tp2_price,
-            "position_size_usd": size,
-            "risk_usd": settings.capital_total * settings.risk_per_trade_pct,
-            "entry_commission_usd": size * 0.001,
-            "sim_source": "telegram_callback",
-            "tp1_hit": False,
-            "trailing_activated": False,
-            "timeframe": "30m",
-            "max_favorable_excursion": entry_price,
-            "max_adverse_excursion": entry_price,
-        },
-        mode=mode,
-    )
-    return f"{'Orden REAL registrada' if mode == 'REAL' else 'Simulacion iniciada'}\n{pair} | {strategy}\ntrade_id: {trade_id}"
+    payload = {
+        "pair": pair,
+        "strategy": strategy,
+        "entry_price": entry_price,
+        "sl_price": sl_price,
+        "tp1_price": tp1_price,
+        "tp2_price": tp2_price,
+        "position_size_usd": size,
+        "risk_usd": settings.capital_total * settings.risk_per_trade_pct,
+        "entry_commission_usd": size * 0.001,
+        "sim_source": "telegram_callback",
+        "tp1_hit": False,
+        "trailing_activated": False,
+        "timeframe": "30m",
+        "max_favorable_excursion": entry_price,
+        "max_adverse_excursion": entry_price,
+    }
+    if action == "ENTER":
+        client = BinanceClient(
+            api_key=os.getenv("BINANCE_API_KEY"),
+            api_secret=os.getenv("BINANCE_SECRET"),
+        )
+        client_order_id = f"bot-{pair.lower()}-{int(time.time())}"[:32]
+        order = client.place_market_buy(pair=pair, quote_qty_usd=size, new_client_order_id=client_order_id)
+        fills = order.get("fills") or []
+        first_fill = fills[0] if fills else {}
+        payload["binance_order_id"] = str(order.get("orderId", ""))
+        payload["binance_client_order_id"] = str(order.get("clientOrderId", client_order_id))
+        payload["entry_price"] = float(order.get("cummulativeQuoteQty", 0) or 0) / max(
+            float(order.get("executedQty", 0) or 1),
+            1e-9,
+        )
+        payload["position_size_usd"] = float(order.get("cummulativeQuoteQty", size) or size)
+        payload["entry_commission_usd"] = float(first_fill.get("commission", payload["entry_commission_usd"]) or 0)
+        payload["entry_order_status"] = str(order.get("status", ""))
+    trade_id = trades.open_trade(payload, mode=mode)
+    label = "Orden LIVE enviada" if action == "ENTER" else "Simulacion iniciada"
+    return f"{label}\n{pair} | {strategy}\nmode: {mode}\ntrade_id: {trade_id}"
 
 
 def _reason_text_from_code(code: str | None) -> str:
@@ -536,12 +622,21 @@ def _process_telegram_update(update: dict) -> None:
         if cmd == "/status":
             from src.config import settings
             from src.core.config_store import ConfigStore
+            from src.core.capital import get_capital_snapshot
+            from src.core.mode import current_live_mode, is_live_mode
 
             config = ConfigStore()
+            mode = current_live_mode()
+            snap = get_capital_snapshot(mode=mode).as_dict()
+            cap_line = (
+                f"- capital_disponible: {snap['capital_disponible']:.2f} ({mode})"
+                if is_live_mode(mode)
+                else f"- capital_total: {config.get_capital(settings.capital_total):.2f}"
+            )
             response_text = (
                 "Estado bot\n"
                 f"- scanner_paused: {'SI' if config.is_paused() else 'NO'}\n"
-                f"- capital_total: {config.get_capital(settings.capital_total):.2f}\n"
+                f"{cap_line}\n"
                 f"- risk_pct: {config.get_risk_pct(settings.risk_per_trade_pct) * 100:.1f}%"
             )
             _send_message(response_text, chat_id=chat_id)

@@ -3,11 +3,18 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from src.core.secrets import get_binance_secret_payload
+
 
 def binance_credentials_configured() -> bool:
     """REAL mode requires signed Binance API access (listenKey, user stream)."""
     key = (os.getenv("BINANCE_API_KEY") or "").strip()
     secret = (os.getenv("BINANCE_SECRET") or "").strip()
+    if key and secret:
+        return True
+    payload = get_binance_secret_payload()
+    key = str(payload.get("api_key", "")).strip()
+    secret = str(payload.get("api_secret", "")).strip()
     return bool(key and secret)
 
 

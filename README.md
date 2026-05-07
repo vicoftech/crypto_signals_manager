@@ -27,6 +27,24 @@ Este proyecto se despliega con Terraform (estado remoto en S3 + lock en DynamoDB
 - `AWS_PROFILE=asap_main`
 
 Para fase SIM no necesitas `BINANCE_API_KEY` ni `BINANCE_SECRET` (solo endpoints publicos).
+Para fase LIVE TEST/REAL define tambien:
+- `BINANCE_SECRET_NAME_TEST` (ej: `crypto-trading-bot/binance-test`)
+- `BINANCE_SECRET_NAME_LIVE` (ej: `crypto-trading-bot/binance-live`)
+- `BINANCE_ENV` (`test_live`/`live_test`/`testnet` o `live`)
+
+Se espera un secreto JSON en AWS Secrets Manager con este formato:
+
+```json
+{
+  "api_key": "xxxx",
+  "api_secret": "yyyy",
+  "env": "testnet"
+}
+```
+
+Seleccion de secreto:
+- si `BINANCE_ENV` es `test_live`, `live_test` o `testnet` -> usa `BINANCE_SECRET_NAME_TEST`
+- si `BINANCE_ENV` es `live` -> usa `BINANCE_SECRET_NAME_LIVE`
 
 ## Comandos para probar el bot
 
@@ -139,3 +157,12 @@ aws ssm get-parameters \
 
 Esta version deja el esqueleto funcional para scanner, contexto, filtros, calculadora y simulador.  
 Webhook Telegram y reconciliacion de eventos Binance estan en modo base (placeholder) para completar en siguiente iteracion.
+
+## Migracion de modos de trades
+
+Para normalizar historico a los nuevos modos (`simulation`, `live_test`, `live`):
+
+```bash
+AWS_PROFILE=asap_main AWS_REGION=ap-northeast-1 \
+python scripts/migrate_trade_modes.py
+```

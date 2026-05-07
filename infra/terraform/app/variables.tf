@@ -37,3 +37,21 @@ variable "audit_firehose_prefix" {
   default     = "trading-bot"
   description = "Prefijo de nombres de Kinesis Firehose (debe coincidir con project_name en infra/audit)."
 }
+
+variable "binance_env" {
+  type        = string
+  default     = "test_live"
+  description = "Entorno Binance: test_live/live_test/testnet | live"
+}
+
+variable "binance_secret_name_test" {
+  type        = string
+  default     = "crypto-trading-bot/binance-test"
+  description = "Secret de testnet/live_test en AWS Secrets Manager."
+}
+
+variable "binance_secret_name_live" {
+  type        = string
+  default     = "crypto-trading-bot/binance-live"
+  description = "Secret de producción live en AWS Secrets Manager."
+}

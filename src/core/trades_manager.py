@@ -10,6 +10,7 @@ from uuid import uuid4
 import boto3
 
 from src.core.market_session import format_market_session
+from src.core.mode import MODE_SIMULATION, normalize_mode, is_simulation_mode
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,10 @@ class TradesManager:
     def open_trade(self, payload: dict, mode: str) -> str:
         trade_id = str(uuid4())
         started = datetime.now(timezone.utc)
+        normalized_mode = normalize_mode(mode)
         row = {
             "trade_id": trade_id,
-            "mode": mode,
+            "mode": normalized_mode,
             "status": "OPEN",
             "started_at": started.isoformat(),
             "market_session": format_market_session(started),
@@ -147,7 +149,7 @@ class TradesManager:
                 },
             )
         self._invalidate_trade_list_cache()
-        if str(trade.get("mode")) == "SIM" and trade.get("pair"):
+        if is_simulation_mode(trade.get("mode")) and trade.get("pair"):
             try:
                 from src.core.pairs_manager import PairsManager
 
@@ -168,18 +170,23 @@ class TradesManager:
         self.config_table.put_item(Item={"key": "capital_total", "value": updated})
 
     def get_open_sims(self) -> list[dict]:
-        return [t for t in self.list_trades() if t.get("mode") == "SIM" and t.get("status") == "OPEN"]
+        return [
+            t
+            for t in self.list_trades()
+            if is_simulation_mode(t.get("mode")) and t.get("status") == "OPEN"
+        ]
 
     def get_all_open_trades(self) -> list[dict]:
-        return self.list_open(mode="SIM")
+        return self.list_open(mode=MODE_SIMULATION)
 
     def list_open(self, mode: str | None = None) -> list[dict]:
         items = [t for t in self.list_trades() if t.get("status") == "OPEN"]
         if mode:
-            items = [t for t in items if t.get("mode") == mode]
+            target_mode = normalize_mode(mode)
+            items = [t for t in items if normalize_mode(t.get("mode")) == target_mode]
         return sorted(items, key=lambda x: str(x.get("started_at", "")), reverse=True)
 
-    def list_recent_closed(self, limit: int = 20) -> list[dict]:
+    def list_recent_closed(self, limit: int = 20, mode: str | None = None) -> list[dict]:
         from src.core.accounting import get_accounting_epoch_iso, trade_in_accounting_window
 
         epoch = get_accounting_epoch_iso()
@@ -188,6 +195,9 @@ class TradesManager:
             for t in self.list_trades()
             if t.get("status") == "CLOSED" and trade_in_accounting_window(t, epoch)
         ]
+        if mode:
+            target_mode = normalize_mode(mode)
+            items = [t for t in items if normalize_mode(t.get("mode")) == target_mode]
         items = sorted(items, key=lambda x: str(x.get("ended_at", "")), reverse=True)
         return items[:limit]
 
@@ -226,25 +236,33 @@ class TradesManager:
         self._list_cache = self._scan_table_segments(segments)
         return self._list_cache
 
-    def get_summary(self) -> dict:
+    def get_summary(self, mode: str | None = None) -> dict:
         """
         Cerradas: cohorte post accounting_epoch (si config). Abiertas: siempre.
+        Si se informa mode, filtra abiertas y cerradas a ese modo.
         """
         from src.core.accounting import get_accounting_epoch_iso, trade_in_accounting_window
 
         epoch = get_accounting_epoch_iso()
         all_t = self.list_trades()
+        target_mode = normalize_mode(mode) if mode else None
         opens = [t for t in all_t if t.get("status") == "OPEN"]
         closed = [
             t for t in all_t if t.get("status") == "CLOSED" and trade_in_accounting_window(t, epoch)
         ]
+        if target_mode:
+            opens = [t for t in opens if normalize_mode(t.get("mode")) == target_mode]
+            closed = [t for t in closed if normalize_mode(t.get("mode")) == target_mode]
         items = opens + closed
         total = len(items)
         wins = len([t for t in closed if float(t.get("net_pnl_usd", 0) or 0) > 0])
         net = sum(float(t.get("net_pnl_usd", 0) or 0) for t in closed)
         by_mode = {
-            "REAL": len([t for t in items if t.get("mode") == "REAL"]),
-            "SIM": len([t for t in items if t.get("mode") == "SIM"]),
+            "live": len([t for t in items if normalize_mode(t.get("mode")) == "live"]),
+            "live_test": len([t for t in items if normalize_mode(t.get("mode")) == "live_test"]),
+            "simulation": len(
+                [t for t in items if normalize_mode(t.get("mode")) == MODE_SIMULATION]
+            ),
         }
         return {
             "total": total,
@@ -257,7 +275,10 @@ class TradesManager:
 
     def find_open_real_by_pair(self, pair: str) -> dict | None:
         normalized = pair.upper().strip()
-        for t in self.list_open(mode="REAL"):
+        for t in self.list_open(mode="live"):
+            if str(t.get("pair", "")).upper() == normalized:
+                return t
+        for t in self.list_open(mode="live_test"):
             if str(t.get("pair", "")).upper() == normalized:
                 return t
         return None

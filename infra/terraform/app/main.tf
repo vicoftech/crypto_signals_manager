@@ -50,12 +50,17 @@ resource "aws_iam_role_policy" "bot_inline" {
     Statement = [
       {
         Action = [
+          "secretsmanager:GetSecretValue",
           "ssm:GetParameter",
           "ssm:GetParameters",
           "ssm:PutParameter"
         ]
         Effect   = "Allow"
-        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/trading-bot/*"
+        Resource = [
+          "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/trading-bot/*",
+          "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.binance_secret_name_test}*",
+          "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.binance_secret_name_live}*"
+        ]
       },
       {
         Action = [
@@ -146,6 +151,9 @@ resource "aws_dynamodb_table_item" "pairs_btc" {
     auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
     strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 resource "aws_dynamodb_table_item" "pairs_eth" {
@@ -162,6 +170,9 @@ resource "aws_dynamodb_table_item" "pairs_eth" {
     auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
     strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 # Pares pausados manualmente (sin Momentum; alineado con DynamoDB).
@@ -181,6 +192,9 @@ resource "aws_dynamodb_table_item" "pairs_hbar" {
     auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
     strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 resource "aws_dynamodb_table_item" "pairs_near" {
@@ -197,6 +211,9 @@ resource "aws_dynamodb_table_item" "pairs_near" {
     auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
     strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 resource "aws_dynamodb_table_item" "pairs_trx" {
@@ -213,6 +230,9 @@ resource "aws_dynamodb_table_item" "pairs_trx" {
     auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
     strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 resource "aws_dynamodb_table_item" "pairs_bnb" {
@@ -229,6 +249,9 @@ resource "aws_dynamodb_table_item" "pairs_bnb" {
     auto_trade_strategies = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
     strategies            = { L = [{ S = "EMAPullback" }, { S = "RangeBreakout" }, { S = "SupportBounce" }, { S = "MACDCross" }, { S = "ORB" }] }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 resource "aws_dynamodb_table_item" "cfg_capital" {
@@ -238,6 +261,9 @@ resource "aws_dynamodb_table_item" "cfg_capital" {
     key   = { S = "capital_total" }
     value = { N = "1183.0" }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 resource "aws_dynamodb_table_item" "cfg_risk" {
@@ -245,8 +271,11 @@ resource "aws_dynamodb_table_item" "cfg_risk" {
   hash_key   = aws_dynamodb_table.config.hash_key
   item = jsonencode({
     key   = { S = "risk_pct" }
-    value = { N = "0.05" }
+    value = { N = "0.005" }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 resource "aws_dynamodb_table_item" "cfg_paused" {
@@ -256,6 +285,9 @@ resource "aws_dynamodb_table_item" "cfg_paused" {
     key   = { S = "scanner_paused" }
     value = { BOOL = false }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 # Cohorte P&L / resumenes: cierres con ended_at >= epoch; abiertas siempre. Corte operativo desde 2026-04-17.
@@ -266,6 +298,9 @@ resource "aws_dynamodb_table_item" "cfg_accounting_epoch" {
     key   = { S = "accounting_epoch_started_at" }
     value = { S = "2026-04-17T00:00:00+00:00" }
   })
+  lifecycle {
+    ignore_changes = [item]
+  }
 }
 
 resource "aws_ssm_parameter" "telegram_bot_token" {
@@ -292,7 +327,7 @@ locals {
   lambda_env = {
     CAPITAL_TOTAL                      = "1183.0"
     BINANCE_HTTP_TIMEOUT               = "2.5"
-    RISK_PER_TRADE_PCT                 = "0.05"
+    RISK_PER_TRADE_PCT                 = "0.005"
     MIN_RR_RATIO                       = "2.5"
     MAX_SL_PCT                         = "0.02"
     TRAILING_ACTIVATION                = "1.0"
@@ -301,8 +336,9 @@ locals {
     COOLDOWN_MINUTES                   = "45"
     TELEGRAM_BOT_TOKEN                 = var.telegram_bot_token
     TELEGRAM_CHAT_ID                   = var.telegram_chat_id
-    BINANCE_API_KEY                    = ""
-    BINANCE_SECRET                     = ""
+    BINANCE_SECRET_NAME_TEST           = var.binance_secret_name_test
+    BINANCE_SECRET_NAME_LIVE           = var.binance_secret_name_live
+    BINANCE_ENV                        = var.binance_env
     PAIRS_TABLE_NAME                   = aws_dynamodb_table.pairs.name
     CONFIG_TABLE_NAME                  = aws_dynamodb_table.config.name
     TRADES_TABLE_NAME                  = aws_dynamodb_table.trades.name
