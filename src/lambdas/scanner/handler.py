@@ -23,6 +23,7 @@ from src.core.telegram_client import TelegramClient
 from src.core.trades_manager import TradesManager
 from src.core.audit import log_opportunity, log_scan_cycle, log_strategy_execution
 from src.core.accounting import format_accounting_line_short
+from src.core.mode import current_live_mode
 from src.strategies import STRATEGY_REGISTRY
 
 logger = logging.getLogger()
@@ -34,6 +35,49 @@ trades = TradesManager()
 cooldown = CooldownState()
 telegram = TelegramClient()
 config_store = ConfigStore()
+
+
+def _open_real_trade_from_opportunity(op_data: dict) -> str:
+    mode = current_live_mode()
+    trade_id = str(uuid.uuid4())
+    size = float(op_data.get("position_size_usd", 100.0) or 100.0)
+    order = binance.place_market_buy(
+        pair=str(op_data["pair"]),
+        quote_qty_usd=size,
+        new_client_order_id=trade_id,
+    )
+    fills = order.get("fills") or []
+    first_fill = fills[0] if fills else {}
+    executed_qty = float(order.get("executedQty", 0) or 0)
+    quote_qty = float(order.get("cummulativeQuoteQty", size) or size)
+    entry_price = quote_qty / max(executed_qty, 1e-9)
+    payload = {
+        "pair": str(op_data["pair"]),
+        "strategy": str(op_data["strategy"]),
+        "timeframe": str(op_data.get("timeframe", "30m")),
+        "tier": str(op_data.get("tier", "1")),
+        "entry_price": entry_price,
+        "sl_price": float(op_data["sl_price"]),
+        "tp1_price": float(op_data["tp1_price"]),
+        "tp2_price": float(op_data["tp2_price"]),
+        "position_size_usd": quote_qty,
+        "risk_usd": float(op_data.get("risk_usd", 0) or 0),
+        "rr_ratio": float(op_data.get("rr_ratio", 0) or 0),
+        "rr_planned": float(op_data.get("rr_ratio", 0) or 0),
+        "tp1_hit": False,
+        "trailing_activated": False,
+        "entry_commission_usd": float(first_fill.get("commission", quote_qty * 0.001) or 0),
+        "entry_order_status": str(order.get("status", "")),
+        "binance_order_id": str(order.get("orderId", "")),
+        "binance_client_order_id": str(order.get("clientOrderId", trade_id)),
+        "opportunity_id": str(op_data.get("opportunity_id", "")),
+        "confluence": bool(op_data.get("confluence", False)),
+        "market_trend": str(op_data.get("market_trend", "")),
+        "market_volatility": str(op_data.get("market_volatility", "")),
+        "max_favorable_excursion": entry_price,
+        "max_adverse_excursion": entry_price,
+    }
+    return trades.open_trade(payload, mode=mode, trade_id=trade_id)
 
 
 def handler(event, context):
@@ -116,40 +160,76 @@ def handler(event, context):
                     )
                     continue
 
-                sim_mode = getattr(pair_cfg, "sim_mode", "manual")
-                if sim_mode == "auto":
-                    signal_px = float(op_data["entry_actual_price"])
-                    op_adj, _slip = apply_slippage_to_op_data(op_data, pair_cfg.pair, "auto")
-                    cur_px = binance.get_price(pair_cfg.pair)
-                    if not is_signal_still_valid(signal_px, cur_px):
+                auto_trade_enabled = bool(getattr(pair_cfg, "auto_trade", False))
+                auto_trade_strategies = list(getattr(pair_cfg, "auto_trade_strategies", []) or [])
+                strategy_allowed_for_auto = (
+                    not auto_trade_strategies or strategy_name in auto_trade_strategies
+                )
+                if auto_trade_enabled and strategy_allowed_for_auto:
+                    try:
+                        trade_id = _open_real_trade_from_opportunity(op_data)
+                    except Exception as e:
+                        logger.exception(
+                            "auto_trade error on %s %s",
+                            pair_cfg.pair,
+                            strategy_name,
+                        )
                         log_strategy_execution(
                             scan_id,
                             pair_cfg.pair,
                             strategy_name,
                             "FALLO",
-                            condicion_falla="drift_entrada",
-                            valor_condicion=f"signal={signal_px} current={cur_px}",
+                            condicion_falla="auto_trade_error",
+                            valor_condicion=str(e)[:180],
                         )
                         continue
-                    payload = trade_payload_from_op_data(op_adj, "auto_scanner")
-                    trades.open_trade(payload, "simulation")
-                    telegram.send_auto_sim_opened(op_adj)
-                    log_opportunity(scan_id, op_adj)
-                    log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
-                    cooldown.mark(pair_cfg.pair, strategy_name)
-                    sent += 1
-                elif sim_mode == "disabled":
-                    telegram.send_opportunity_notify_only(op_data)
+                    mode = current_live_mode()
+                    telegram.send_trade_update(
+                        "🤖 AUTO-TRADE REAL EJECUTADO\n"
+                        f"{pair_cfg.pair} | {strategy_name}\n"
+                        f"mode: {mode}\n"
+                        f"trade_id: {trade_id}\n"
+                        f"Entrada ref: {float(op_data.get('entry_actual_price', 0) or 0):.4f}"
+                    )
                     log_opportunity(scan_id, op_data)
                     log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
                     cooldown.mark(pair_cfg.pair, strategy_name)
                     sent += 1
                 else:
-                    telegram.send_opportunity(op_data)
-                    log_opportunity(scan_id, op_data)
-                    log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
-                    cooldown.mark(pair_cfg.pair, strategy_name)
-                    sent += 1
+                    sim_mode = getattr(pair_cfg, "sim_mode", "manual")
+                    if sim_mode == "auto":
+                        signal_px = float(op_data["entry_actual_price"])
+                        op_adj, _slip = apply_slippage_to_op_data(op_data, pair_cfg.pair, "auto")
+                        cur_px = binance.get_price(pair_cfg.pair)
+                        if not is_signal_still_valid(signal_px, cur_px):
+                            log_strategy_execution(
+                                scan_id,
+                                pair_cfg.pair,
+                                strategy_name,
+                                "FALLO",
+                                condicion_falla="drift_entrada",
+                                valor_condicion=f"signal={signal_px} current={cur_px}",
+                            )
+                            continue
+                        payload = trade_payload_from_op_data(op_adj, "auto_scanner")
+                        trades.open_trade(payload, "simulation")
+                        telegram.send_auto_sim_opened(op_adj)
+                        log_opportunity(scan_id, op_adj)
+                        log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
+                        cooldown.mark(pair_cfg.pair, strategy_name)
+                        sent += 1
+                    elif sim_mode == "disabled":
+                        telegram.send_opportunity_notify_only(op_data)
+                        log_opportunity(scan_id, op_data)
+                        log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
+                        cooldown.mark(pair_cfg.pair, strategy_name)
+                        sent += 1
+                    else:
+                        telegram.send_opportunity(op_data)
+                        log_opportunity(scan_id, op_data)
+                        log_strategy_execution(scan_id, pair_cfg.pair, strategy_name, "OPORTUNIDAD")
+                        cooldown.mark(pair_cfg.pair, strategy_name)
+                        sent += 1
         except Exception:
             errors += 1
             logger.exception("scanner error on %s", pair_cfg.pair)
@@ -175,8 +255,6 @@ def handler(event, context):
     agg_errors += errors
 
     if batch_count >= 3:
-        from src.core.mode import current_live_mode
-
         mode = current_live_mode()
         open_mode_trades = trades.list_open(mode=mode)
         if open_mode_trades:

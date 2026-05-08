@@ -4,14 +4,16 @@ import os
 import time
 import hmac
 import hashlib
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from urllib.parse import urlencode
 
-import pandas as pd
 import requests
 from src.core.secrets import get_binance_secret_payload
 
 _DEFAULT_HTTP_TIMEOUT = 2.5
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class BinanceClient:
@@ -36,6 +38,8 @@ class BinanceClient:
         self._timeout = float(os.getenv("BINANCE_HTTP_TIMEOUT", str(_DEFAULT_HTTP_TIMEOUT)) or _DEFAULT_HTTP_TIMEOUT)
 
     def get_klines_df(self, pair: str, interval: str, limit: int = 100) -> pd.DataFrame:
+        import pandas as pd
+
         resp = requests.get(
             f"{self.base_url}/api/v3/klines",
             params={"symbol": pair, "interval": interval, "limit": limit},
