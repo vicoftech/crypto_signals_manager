@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 
 from src.core.auto_sim_utils import apply_sl_close_slippage, apply_trailing_close_slippage
 from src.core.binance_client import BinanceClient
@@ -55,6 +56,7 @@ def _emit_closed_notifications(
     exit_px: float,
     close_reason: str,
 ) -> None:
+    motive_display = str(closed.get("close_reason_text") or close_reason or "")
     mercado = closed.get("market_session") or format_market_session_from_iso(
         str(closed.get("started_at", trade_fallback.get("started_at", "")))
     )
@@ -89,7 +91,7 @@ def _emit_closed_notifications(
             net,
             pct,
             r_mult,
-            str(close_reason),
+            motive_display,
             dur,
             stats_line,
         )
@@ -100,7 +102,7 @@ def _emit_closed_notifications(
                 f"{closed.get('pair', trade_fallback.get('pair'))} | "
                 f"{closed.get('strategy', trade_fallback.get('strategy'))}\n"
                 f"Mercado: {mercado}\n"
-                f"Motivo: {close_reason}\n"
+                f"Motivo: {motive_display}\n"
                 f"Salida: {float(closed.get('exit_price', exit_px) or exit_px):.4f}\n"
                 f"P&L neto: {net:+.2f} USD\n"
                 f"Capital actual: {capital:.2f}\n\n"
@@ -110,6 +112,38 @@ def _emit_closed_notifications(
     el = pairs.eligibility_for_pair(str(closed.get("pair", "")))
     if el.get("eligible"):
         telegram.send_auto_trade_eligible_notice(str(closed.get("pair", "")), el)
+
+    tid = str(closed.get("trade_id") or trade_fallback.get("trade_id") or "")
+    if tid:
+        trades.update_trade(tid, {"close_notified_at": datetime.now(timezone.utc).isoformat()})
+
+
+def _was_closed_within_hours(row: dict, max_age_hours: float) -> bool:
+    ended = str(row.get("ended_at") or "")
+    if not ended:
+        return False
+    try:
+        ea = ended.replace("Z", "+00:00") if ended.endswith("Z") else ended
+        dt = datetime.fromisoformat(ea)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - dt <= timedelta(hours=max_age_hours)
+    except Exception:
+        return False
+
+
+def _pending_close_notifications(max_age_hours: float) -> list[dict]:
+    """Cierres en Dynamo sin aviso Telegram (p. ej. cerrados por eventos Binance)."""
+    out: list[dict] = []
+    for row in trades.list_trades():
+        if str(row.get("status", "")).upper() != "CLOSED":
+            continue
+        if row.get("close_notified_at"):
+            continue
+        if not _was_closed_within_hours(row, max_age_hours):
+            continue
+        out.append(row)
+    return out
 
 
 def handler(event, context):
@@ -210,5 +244,15 @@ def handler(event, context):
         closed = trades.get_trade(tid) or {}
         exit_px = float(closed.get("exit_price") or price)
         _emit_closed_notifications(closed, trade, exit_px, close_reason)
+
+    max_age = float(os.getenv("CLOSED_NOTIFY_MAX_AGE_HOURS", "72"))
+    for row in _pending_close_notifications(max_age):
+        tid = str(row.get("trade_id", ""))
+        exit_px = float(row.get("exit_price") or 0)
+        cr = str(row.get("close_reason") or "")
+        try:
+            _emit_closed_notifications(row, row, exit_px, cr)
+        except Exception:
+            logger.exception("aviso Telegram para cierre pendiente fallo trade_id=%s", tid)
 
     return {"ok": True}

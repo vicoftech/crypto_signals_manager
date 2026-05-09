@@ -333,6 +333,7 @@ locals {
     TRAILING_ACTIVATION                = "1.0"
     TRAILING_STEP_PCT                  = "0.005"
     TRAILING_TP1_TP3_STEP_PCT          = "0.03"
+    CLOSED_NOTIFY_MAX_AGE_HOURS        = "72"
     ENTRY_DRIFT_MAX_PCT                = "0.003"
     COOLDOWN_MINUTES                   = "45"
     TELEGRAM_BOT_TOKEN                 = var.telegram_bot_token
