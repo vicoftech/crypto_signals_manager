@@ -18,9 +18,10 @@ class CapitalSnapshot:
     capital_disponible: float
     posiciones_abiertas: int
     drawdown_actual: float
+    equity_note: str = ""
 
     def as_dict(self) -> dict:
-        return {
+        out = {
             "capital_inicial": round(self.capital_inicial, 2),
             "pnl_cerrado": round(self.pnl_cerrado, 2),
             "capital_total": round(self.capital_total, 2),
@@ -29,6 +30,9 @@ class CapitalSnapshot:
             "posiciones_abiertas": self.posiciones_abiertas,
             "drawdown_actual": round(self.drawdown_actual, 4),
         }
+        if self.equity_note:
+            out["equity_note"] = self.equity_note
+        return out
 
 
 def get_capital_snapshot(trades_mgr: TradesManager | None = None, mode: str | None = None) -> CapitalSnapshot:
@@ -39,7 +43,8 @@ def get_capital_snapshot(trades_mgr: TradesManager | None = None, mode: str | No
     - capital_total: capital actual acumulado (ConfigTable.capital_total)
     - pnl_cerrado: capital_total - capital_inicial
     - capital_bloqueado: suma de position_size_usd de trades SIM abiertos
-    - capital_disponible: capital_total - capital_bloqueado
+    - capital_disponible: capital_total - capital_bloqueado (SIM); en live = USDT libre en Binance.
+    - equity_note: en live, aclara que el saldo es USDT spot (no NAV en alts).
     """
     config = ConfigStore()
     trades = trades_mgr if trades_mgr is not None else TradesManager()
@@ -53,6 +58,7 @@ def get_capital_snapshot(trades_mgr: TradesManager | None = None, mode: str | No
     capital_disponible = capital_total
     abiertos = trades.list_open(mode="simulation")
 
+    equity_note = ""
     if is_live_mode(target_mode):
         # En live/live_test el sizing debe reflejar el saldo real/ficticio de Binance.
         try:
@@ -61,6 +67,9 @@ def get_capital_snapshot(trades_mgr: TradesManager | None = None, mode: str | No
             capital_disponible = float(bal.get("free", 0) or 0)
             capital_bloqueado = max(0.0, capital_total - capital_disponible)
             abiertos = trades.list_open(mode=target_mode)
+            equity_note = (
+                "Totales son saldo USDT en wallet spot (no NAV de posiciones en cripto)."
+            )
             baseline_key = (
                 "capital_inicial_live"
                 if normalize_mode(target_mode) == "live"
@@ -77,6 +86,7 @@ def get_capital_snapshot(trades_mgr: TradesManager | None = None, mode: str | No
             capital_disponible = capital_total
             capital_bloqueado = 0.0
             abiertos = trades.list_open(mode=target_mode)
+            equity_note = ""
     else:
         # capital_total dinámico mantenido por TradesManager._apply_net_pnl_to_capital
         capital_total = config.get_capital(settings.capital_total)
@@ -98,5 +108,6 @@ def get_capital_snapshot(trades_mgr: TradesManager | None = None, mode: str | No
         capital_disponible=capital_disponible,
         posiciones_abiertas=len(abiertos),
         drawdown_actual=drawdown_actual,
+        equity_note=equity_note,
     )
 

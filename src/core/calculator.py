@@ -14,15 +14,14 @@ class InsufficientCapitalError(Exception):
 def with_risk(op: Opportunity, entry_actual_price: float) -> dict:
     """
     MODELO SPOT DIRECTO:
-    - position_size_usd = capital_total * risk_pct  (monto invertido)
-    - risk_usd = position_size_usd * sl_pct          (pérdida esperada al SL)
+    - position_size_usd = capital_disponible * risk_pct  (monto invertido; alineado con /capital)
+    - risk_usd = position_size_usd * sl_pct         (pérdida esperada al SL)
     """
     sl_pct = (entry_actual_price - op.sl_price) / entry_actual_price
     if sl_pct <= 0:
         raise ValueError("Invalid SL for LONG")
 
     snap = get_capital_snapshot().as_dict()
-    capital_total = snap["capital_total"]
     capital_disponible = snap["capital_disponible"]
 
     if capital_disponible <= 0:
@@ -30,7 +29,8 @@ def with_risk(op: Opportunity, entry_actual_price: float) -> dict:
             f"Capital disponible: ${capital_disponible:.2f}. No se puede abrir nueva posicion."
         )
 
-    amount_to_invest = capital_total * settings.risk_per_trade_pct
+    # Misma base que /capital "Riesgo proxima op": fracción del libre (sim resta bloqueo SIM).
+    amount_to_invest = capital_disponible * settings.risk_per_trade_pct
     if amount_to_invest > capital_disponible:
         raise InsufficientCapitalError(
             f"Capital insuficiente. disponible=${capital_disponible:.2f} requerido=${amount_to_invest:.2f}"

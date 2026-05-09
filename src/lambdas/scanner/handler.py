@@ -60,6 +60,7 @@ def _open_real_trade_from_opportunity(op_data: dict) -> str:
         "sl_price": float(op_data["sl_price"]),
         "tp1_price": float(op_data["tp1_price"]),
         "tp2_price": float(op_data["tp2_price"]),
+        "base_qty": executed_qty,
         "position_size_usd": quote_qty,
         "risk_usd": float(op_data.get("risk_usd", 0) or 0),
         "rr_ratio": float(op_data.get("rr_ratio", 0) or 0),
@@ -143,7 +144,7 @@ def handler(event, context):
                         from src.core.capital import get_capital_snapshot
 
                         snap = get_capital_snapshot().as_dict()
-                        required = snap["capital_total"] * settings.risk_per_trade_pct
+                        required = snap["capital_disponible"] * settings.risk_per_trade_pct
                         telegram.send_capital_insuficiente(pair_cfg.pair, snap, required)
                     except Exception:
                         logger.exception("capital snapshot / aviso insuficiente fallo")

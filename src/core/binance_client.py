@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import time
 import hmac
@@ -14,6 +15,15 @@ _DEFAULT_HTTP_TIMEOUT = 2.5
 
 if TYPE_CHECKING:
     import pandas as pd
+
+
+def exit_order_client_id(trade_id: str) -> str:
+    """
+    Binance newClientOrderId: max 36 chars, [a-zA-Z0-9-_].
+    UUID sin guiones (32 hex) + prefijo = 33 chars.
+    """
+    compact = trade_id.replace("-", "").replace("_", "")[:32]
+    return ("E" + compact)[:36]
 
 
 class BinanceClient:
@@ -36,6 +46,55 @@ class BinanceClient:
             else "https://api.binance.com"
         )
         self._timeout = float(os.getenv("BINANCE_HTTP_TIMEOUT", str(_DEFAULT_HTTP_TIMEOUT)) or _DEFAULT_HTTP_TIMEOUT)
+        # symbol -> (step_size, min_qty)
+        self._lot_filters: dict[str, tuple[float, float]] = {}
+
+    def _lot_step_min_qty(self, symbol: str) -> tuple[float, float]:
+        if symbol in self._lot_filters:
+            return self._lot_filters[symbol]
+        resp = requests.get(
+            f"{self.base_url}/api/v3/exchangeInfo",
+            params={"symbol": symbol},
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        symbols = (resp.json() or {}).get("symbols") or []
+        if not symbols:
+            self._lot_filters[symbol] = (1e-8, 1e-8)
+            return self._lot_filters[symbol]
+        filters = symbols[0].get("filters") or []
+        step = 1e-8
+        min_q = 1e-8
+        for f in filters:
+            if f.get("filterType") == "LOT_SIZE":
+                step = float(f.get("stepSize", step) or step)
+                min_q = float(f.get("minQty", min_q) or min_q)
+                break
+        self._lot_filters[symbol] = (step, min_q)
+        return step, min_q
+
+    def floor_quantity_to_lot(self, symbol: str, quantity: float) -> float:
+        """Cantidad de venta ajustada al stepSize (redondeo hacia abajo)."""
+        step, min_q = self._lot_step_min_qty(symbol)
+        if quantity <= 0:
+            return 0.0
+        floored = math.floor(quantity / step) * step
+        if floored < min_q:
+            return 0.0
+        return floored
+
+    def quantity_param_string(self, symbol: str, quantity: float) -> str:
+        """String `quantity` compatible con filtros LOT_SIZE del par."""
+        step, _ = self._lot_step_min_qty(symbol)
+        if step <= 0:
+            decimals = 8
+        elif step >= 1:
+            decimals = 0
+        else:
+            step_str = f"{step:.12f}".rstrip("0").rstrip(".")
+            decimals = len(step_str.split(".")[1]) if "." in step_str else 8
+        decimals = min(max(decimals, 0), 12)
+        return format(round(quantity, decimals), f".{decimals}f").rstrip("0").rstrip(".")
 
     def get_klines_df(self, pair: str, interval: str, limit: int = 100) -> pd.DataFrame:
         import pandas as pd
@@ -84,6 +143,7 @@ class BinanceClient:
             "side": event.get("S"),
             "avg_price": float(event.get("L", 0) or 0),
             "commission": float(event.get("n", 0) or 0),
+            "client_order_id": str(event.get("c") or ""),
         }
 
     def _signed_headers(self) -> dict[str, str]:
@@ -119,13 +179,14 @@ class BinanceClient:
         resp.raise_for_status()
 
     def place_market_buy(self, pair: str, quote_qty_usd: float, new_client_order_id: str) -> dict[str, Any]:
+        coid = str(new_client_order_id or "")[:36]
         params = self._sign_params(
             {
                 "symbol": pair,
                 "side": "BUY",
                 "type": "MARKET",
                 "quoteOrderQty": f"{quote_qty_usd:.8f}",
-                "newClientOrderId": new_client_order_id,
+                "newClientOrderId": coid,
             }
         )
         resp = requests.post(
@@ -133,6 +194,33 @@ class BinanceClient:
             headers=self._signed_headers(),
             params=params,
             timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def place_market_sell(self, pair: str, base_quantity: float, new_client_order_id: str) -> dict[str, Any]:
+        """Venta a mercado en SPOT (cantidad en activo base)."""
+        qty = self.floor_quantity_to_lot(pair, base_quantity)
+        if qty <= 0:
+            raise ValueError(
+                f"cantidad de venta invalida tras LOT_SIZE: pair={pair} base_quantity={base_quantity}"
+            )
+        coid = str(new_client_order_id or "")[:36]
+        qty_str = self.quantity_param_string(pair, qty)
+        params = self._sign_params(
+            {
+                "symbol": pair,
+                "side": "SELL",
+                "type": "MARKET",
+                "quantity": qty_str,
+                "newClientOrderId": coid,
+            }
+        )
+        resp = requests.post(
+            f"{self.base_url}/api/v3/order",
+            headers=self._signed_headers(),
+            params=params,
+            timeout=max(self._timeout, 5.0),
         )
         resp.raise_for_status()
         return resp.json()

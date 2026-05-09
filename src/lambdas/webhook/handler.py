@@ -179,14 +179,17 @@ def _handle_command(
         risk_pct = config.get_risk_pct(settings.risk_per_trade_pct)
         riesgo_prox = cap["capital_disponible"] * risk_pct
         if is_live_mode(mode):
+            note = cap.get("equity_note")
+            note_line = f"\n📝 {note}\n" if note else ""
             return (
                 f"💼 CAPITAL BINANCE ({mode.upper()})\n\n"
                 f"{pnl_emoji} P&L Binance:      ${cap['pnl_cerrado']:+,.2f}\n"
                 f"✅ Disponible:        ${cap['capital_disponible']:,.2f}\n"
                 f"🔒 Bloqueado:         ${cap['capital_bloqueado']:,.2f}\n"
-                f"📊 Total cuenta:      ${cap['capital_total']:,.2f}\n\n"
+                f"📊 Total cuenta:      ${cap['capital_total']:,.2f}\n"
+                f"{note_line}"
                 f"{dd_text}\n"
-                f"Riesgo proxima op:    ${riesgo_prox:,.2f}  ({risk_pct*100:.3f}%)"
+                f"Proxima posicion:      ${riesgo_prox:,.2f}  ({risk_pct*100:.3f}% del disponible)"
             )
         return (
             "💼 ESTADO DEL CAPITAL SIMULADO\n\n"
@@ -197,7 +200,7 @@ def _handle_command(
             f"🔒 Bloqueado ({cap['posiciones_abiertas']} ops): -${cap['capital_bloqueado']:,.2f}\n"
             f"✅ Disponible:         ${cap['capital_disponible']:,.2f}\n\n"
             f"{dd_text}\n"
-            f"Riesgo proxima op:    ${riesgo_prox:,.2f}  ({risk_pct*100:.3f}%)\n\n"
+            f"Proxima posicion:      ${riesgo_prox:,.2f}  ({risk_pct*100:.3f}% del disponible)\n\n"
             f"{format_accounting_block()}"
         )
     if cmd == "/riesgo":
@@ -376,12 +379,20 @@ def _handle_command(
             f"{format_accounting_line_short()}"
         )
     if cmd == "/confirmado" and len(parts) >= 2:
+        from src.core.binance_client import BinanceClient
+        from src.core.live_exit import close_live_trade_with_market_sell
+
         trade = trades.find_open_real_by_pair(parts[1])
         if not trade:
             return "No hay operacion LIVE abierta para ese par"
-        exit_price = float(trade.get("entry_price", 0) or 0)
-        trades.close_trade(trade["trade_id"], "MANUAL", exit_price)
-        return f"Operacion LIVE confirmada/cerrada: {trade['trade_id']}"
+        client = BinanceClient()
+        px = client.get_price(str(trade.get("pair", "")))
+        ok, err = close_live_trade_with_market_sell(
+            trades, client, trade, "MANUAL", fallback_price=float(px)
+        )
+        if not ok:
+            return f"No se pudo vender en Binance: {err}"
+        return f"Operacion LIVE cerrada con venta MARKET: {trade['trade_id']}"
     if cmd == "/historial":
         from src.core.accounting import format_accounting_line_short
         from src.core.mode import current_live_mode
@@ -533,6 +544,7 @@ def _handle_callback(callback_query: dict) -> str:
             1e-9,
         )
         payload["position_size_usd"] = float(order.get("cummulativeQuoteQty", size) or size)
+        payload["base_qty"] = float(order.get("executedQty", 0) or 0)
         payload["entry_commission_usd"] = float(first_fill.get("commission", payload["entry_commission_usd"]) or 0)
         payload["entry_order_status"] = str(order.get("status", ""))
         trade_id = trades.open_trade(payload, mode=mode, trade_id=trade_id)

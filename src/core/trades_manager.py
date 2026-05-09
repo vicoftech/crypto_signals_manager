@@ -10,7 +10,7 @@ from uuid import uuid4
 import boto3
 
 from src.core.market_session import format_market_session
-from src.core.mode import MODE_SIMULATION, normalize_mode, is_simulation_mode
+from src.core.mode import MODE_SIMULATION, normalize_mode, is_simulation_mode, is_live_mode
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,8 @@ class TradesManager:
         self._trades[trade_id]["rr_actual"] = r_mult
         self._trades[trade_id]["r_multiple"] = r_mult
         self._trades[trade_id]["ended_at"] = datetime.now(timezone.utc).isoformat()
-        self._apply_net_pnl_to_capital(net_pnl)
+        if is_simulation_mode(trade.get("mode")):
+            self._apply_net_pnl_to_capital(net_pnl)
         if self.table:
             self.table.update_item(
                 Key={"trade_id": trade_id},
@@ -174,6 +175,14 @@ class TradesManager:
             t
             for t in self.list_trades()
             if is_simulation_mode(t.get("mode")) and t.get("status") == "OPEN"
+        ]
+
+    def get_open_live_trades(self) -> list[dict]:
+        """live_test y live: open trades que requieren monitor de TP/SL y venta SPOT."""
+        return [
+            t
+            for t in self.list_trades()
+            if is_live_mode(t.get("mode")) and str(t.get("status", "")).upper() == "OPEN"
         ]
 
     def get_all_open_trades(self) -> list[dict]:
