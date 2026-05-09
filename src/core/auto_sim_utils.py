@@ -40,10 +40,11 @@ def apply_slippage_to_op_data(op_data: dict[str, Any], pair: str, entry_mode: st
     d["sl_price"] = float(d["sl_price"]) + shift
     d["tp1_price"] = float(d["tp1_price"]) + shift
     d["tp2_price"] = float(d["tp2_price"]) + shift
+    d["tp3_price"] = float(d.get("tp3_price") or d["tp2_price"]) + shift
     sl = float(d["sl_price"])
-    tp2 = float(d["tp2_price"])
+    tp3 = float(d["tp3_price"])
     if ent > sl:
-        d["rr_ratio"] = (tp2 - ent) / (ent - sl)
+        d["rr_ratio"] = (tp3 - ent) / (ent - sl)
         d["sl_pct"] = (ent - sl) / ent
         risk_usd = float(d.get("risk_usd", settings.capital_total * settings.risk_per_trade_pct))
         d["risk_usd"] = risk_usd
@@ -115,6 +116,10 @@ def trade_payload_from_op_data(op: dict[str, Any], sim_source: str) -> dict[str,
         "sl_price": float(op["sl_price"]),
         "tp1_price": float(op["tp1_price"]),
         "tp2_price": float(op["tp2_price"]),
+        "tp3_price": float(op.get("tp3_price") or op["tp2_price"]),
+        "trailing_tp1_tp3_step_pct": float(
+            op.get("trailing_tp1_tp3_step_pct") or settings.trailing_tp1_tp3_step_pct
+        ),
         "position_size_usd": size,
         "risk_usd": float(op.get("risk_usd", 0) or 0),
         "rr_ratio": planned_rr,

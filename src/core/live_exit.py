@@ -1,7 +1,53 @@
 from __future__ import annotations
 
-from src.core.binance_client import BinanceClient, exit_order_client_id
+import logging
+
+from src.core.binance_client import BinanceClient, exit_order_client_id, oco_list_client_id
 from src.core.trades_manager import TradesManager
+
+logger = logging.getLogger(__name__)
+
+
+def attach_oco_protections(
+    binance: BinanceClient,
+    trades: TradesManager,
+    trade_id: str,
+    pair: str,
+    base_qty: float,
+    sl_price: float,
+    tp3_price: float,
+) -> tuple[bool, str]:
+    """OCO venta: limite TP3 + stop SL. Devuelve (ok, mensaje_error)."""
+    try:
+        tick = binance.tick_size(pair)
+        sl_lim = binance.round_price_to_tick(pair, max(sl_price - tick * 2, sl_price * 0.9999), "down")
+        oco = binance.place_oco_sell_tp_sl(
+            pair,
+            base_qty,
+            tp3_price,
+            sl_price,
+            sl_lim,
+            oco_list_client_id(trade_id),
+        )
+        lim_id, stop_id = "", ""
+        for o in oco.get("orders") or []:
+            ot = str(o.get("type", "")).upper()
+            oid = str(o.get("orderId", ""))
+            if "STOP" in ot:
+                stop_id = oid
+            elif "LIMIT" in ot:
+                lim_id = oid
+        trades.update_trade(
+            trade_id,
+            {
+                "binance_oco_order_list_id": str(oco.get("orderListId", "")),
+                "binance_oco_limit_order_id": lim_id,
+                "binance_oco_stop_order_id": stop_id,
+            },
+        )
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 
 
 def avg_exit_from_sell_order(order: dict) -> float:
@@ -31,6 +77,13 @@ def close_live_trade_with_market_sell(
     """
     tid = str(trade.get("trade_id", ""))
     pair = str(trade.get("pair", ""))
+    oco_oid = trade.get("binance_oco_order_list_id")
+    if oco_oid and str(oco_oid).strip() not in ("", "0", "None"):
+        try:
+            binance.cancel_order_list(pair, int(float(oco_oid)))
+        except Exception:
+            logger.warning("cancel OCO antes de market sell fallo trade=%s", tid, exc_info=True)
+
     base_qty = float(trade.get("base_qty") or 0)
     if base_qty <= 0:
         ep = float(trade.get("entry_price") or 0)

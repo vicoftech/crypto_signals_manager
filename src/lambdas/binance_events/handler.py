@@ -24,9 +24,22 @@ def handler(event, context):
     side = str(parsed.get("side", "")).upper()
     symbol = str(parsed.get("symbol") or "").upper()
 
-    # Salida: venta vinculada a orden de exit o al clientOrderId reservado antes del SELL
+    # Salida: piernas OCO (TP3 limit / SL stop) antes que otras ventas
     if status == "FILLED" and side == "SELL":
         exit_price = float(parsed.get("avg_price", 0) or 0)
+        for t in trades.list_open():
+            tid = str(t.get("trade_id", ""))
+            if str(t.get("binance_oco_limit_order_id", "")) == order_id:
+                if exit_price <= 0:
+                    exit_price = float(t.get("entry_price", 0) or 0)
+                trades.close_trade(tid, "TP3", exit_price)
+                return {"ok": True, "closed_trade_id": tid, "via": "oco_tp"}
+            if str(t.get("binance_oco_stop_order_id", "")) == order_id:
+                if exit_price <= 0:
+                    exit_price = float(t.get("entry_price", 0) or 0)
+                trades.close_trade(tid, "SL", exit_price)
+                return {"ok": True, "closed_trade_id": tid, "via": "oco_sl"}
+
         matched = None
         for t in trades.list_open():
             if str(t.get("binance_exit_order_id", "")) == order_id:

@@ -15,6 +15,7 @@ def test_calculator_builds_rr():
         sl_price=99.0,
         tp1_price=101.5,
         tp2_price=103.0,
+        tp3_price=104.5,
         sl_type="low",
         market_context=MarketContext("BTCUSDT", "BULLISH", "MEDIUM", "ACTIVE", True, False, True, "ok"),
     )

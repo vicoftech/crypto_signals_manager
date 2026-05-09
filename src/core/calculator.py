@@ -42,7 +42,7 @@ def with_risk(op: Opportunity, entry_actual_price: float) -> dict:
 
     position_size_usd = amount_to_invest
     risk_usd = amount_to_invest * sl_pct
-    rr_ratio = (op.tp2_price - entry_actual_price) / (entry_actual_price - op.sl_price)
+    rr_ratio = (op.tp3_price - entry_actual_price) / (entry_actual_price - op.sl_price)
     data = asdict(op)
     data.update(
         {
@@ -53,6 +53,8 @@ def with_risk(op: Opportunity, entry_actual_price: float) -> dict:
             "rr_ratio": rr_ratio,
             "trailing_activation": settings.trailing_activation,
             "trailing_step_pct": settings.trailing_step_pct,
+            "trailing_tp1_tp3_step_pct": settings.trailing_tp1_tp3_step_pct,
+            "tp3_price": float(op.tp3_price),
         }
     )
     return data

@@ -478,6 +478,7 @@ def _handle_command(
             "sl_price",
             "tp1_price",
             "tp2_price",
+            "tp3_price",
             "started_at",
             "ended_at",
             "close_reason",
@@ -503,6 +504,7 @@ def _handle_command(
 def _handle_callback(callback_query: dict) -> str:
     from src.config import binance_credentials_configured, settings
     from src.core.binance_client import BinanceClient
+    from src.core.live_exit import attach_oco_protections
     from src.core.mode import MODE_SIMULATION, current_live_mode
     from src.core.trades_manager import TradesManager
 
@@ -527,6 +529,8 @@ def _handle_callback(callback_query: dict) -> str:
     sl_price = entry_price * 0.99
     tp1_price = entry_price * 1.01
     tp2_price = entry_price * 1.02
+    risk_pre = entry_price - sl_price
+    tp3_price = entry_price + risk_pre * 4.5
     size = 100.0
     payload = {
         "pair": pair,
@@ -535,6 +539,8 @@ def _handle_callback(callback_query: dict) -> str:
         "sl_price": sl_price,
         "tp1_price": tp1_price,
         "tp2_price": tp2_price,
+        "tp3_price": tp3_price,
+        "trailing_tp1_tp3_step_pct": settings.trailing_tp1_tp3_step_pct,
         "position_size_usd": size,
         "risk_usd": settings.capital_total * settings.risk_per_trade_pct,
         "entry_commission_usd": size * 0.001,
@@ -566,7 +572,23 @@ def _handle_callback(callback_query: dict) -> str:
         payload["base_qty"] = float(order.get("executedQty", 0) or 0)
         payload["entry_commission_usd"] = float(first_fill.get("commission", payload["entry_commission_usd"]) or 0)
         payload["entry_order_status"] = str(order.get("status", ""))
+        ent_f = float(payload["entry_price"])
+        risk_f = ent_f - sl_price
+        payload["tp3_price"] = ent_f + risk_f * 4.5
         trade_id = trades.open_trade(payload, mode=mode, trade_id=trade_id)
+        ok_o, err_o = attach_oco_protections(
+            client,
+            trades,
+            trade_id,
+            pair,
+            float(payload["base_qty"]),
+            float(sl_price),
+            float(payload["tp3_price"]),
+        )
+        if not ok_o:
+            return (
+                f"Compra OK pero OCO fallo: {err_o[:100]}\n{pair} trade_id={trade_id}"
+            )
     else:
         trade_id = trades.open_trade(payload, mode=mode)
     label = "Orden LIVE enviada" if action == "ENTER" else "Simulacion iniciada"
@@ -579,6 +601,7 @@ def _reason_text_from_code(code: str | None) -> str:
         "SL": "Stop loss alcanzado",
         "TP1": "Take profit 1 alcanzado",
         "TP2": "Take profit 2 alcanzado",
+        "TP3": "Take profit 3 alcanzado",
         "TRAILING_SL": "Trailing stop activado y ejecutado",
         "MANUAL": "Cierre manual confirmado",
         "INVALID": "Operacion cerrada por estado inconsistente",

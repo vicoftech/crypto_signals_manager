@@ -332,6 +332,7 @@ locals {
     MAX_SL_PCT                         = "0.02"
     TRAILING_ACTIVATION                = "1.0"
     TRAILING_STEP_PCT                  = "0.005"
+    TRAILING_TP1_TP3_STEP_PCT          = "0.03"
     ENTRY_DRIFT_MAX_PCT                = "0.003"
     COOLDOWN_MINUTES                   = "45"
     TELEGRAM_BOT_TOKEN                 = var.telegram_bot_token
@@ -497,8 +498,8 @@ resource "aws_lambda_permission" "scanner_events" {
 }
 
 resource "aws_cloudwatch_event_rule" "position_monitor_rule" {
-  name                = "crypto-trading-bot-position-monitor-1m"
-  schedule_expression = "rate(1 minute)"
+  name                = "crypto-trading-bot-position-monitor-5m"
+  schedule_expression = "rate(5 minutes)"
 }
 
 resource "aws_cloudwatch_event_target" "position_monitor_target" {

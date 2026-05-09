@@ -7,6 +7,7 @@ import uuid
 
 from src.config import settings
 from src.core.binance_client import BinanceClient
+from src.core.live_exit import attach_oco_protections
 from src.core.calculator import InsufficientCapitalError, with_risk
 from src.core.config_store import ConfigStore
 from src.core.filters import needs_drift_recalc, passes_quality_filters
@@ -60,6 +61,10 @@ def _open_real_trade_from_opportunity(op_data: dict) -> str:
         "sl_price": float(op_data["sl_price"]),
         "tp1_price": float(op_data["tp1_price"]),
         "tp2_price": float(op_data["tp2_price"]),
+        "tp3_price": float(op_data["tp3_price"]),
+        "trailing_tp1_tp3_step_pct": float(
+            op_data.get("trailing_tp1_tp3_step_pct") or settings.trailing_tp1_tp3_step_pct
+        ),
         "base_qty": executed_qty,
         "position_size_usd": quote_qty,
         "risk_usd": float(op_data.get("risk_usd", 0) or 0),
@@ -78,7 +83,26 @@ def _open_real_trade_from_opportunity(op_data: dict) -> str:
         "max_favorable_excursion": entry_price,
         "max_adverse_excursion": entry_price,
     }
-    return trades.open_trade(payload, mode=mode, trade_id=trade_id)
+    tid = trades.open_trade(payload, mode=mode, trade_id=trade_id)
+    pair_s = str(op_data["pair"])
+    ok_oco, err_oco = attach_oco_protections(
+        binance,
+        trades,
+        tid,
+        pair_s,
+        executed_qty,
+        float(op_data["sl_price"]),
+        float(op_data["tp3_price"]),
+    )
+    if ok_oco:
+        logger.info("OCO colocado trade_id=%s", tid)
+    else:
+        logger.exception("OCO fallo para %s trade_id=%s: %s", pair_s, tid, err_oco)
+        telegram.send_trade_update(
+            f"⚠️ Compra ejecutada pero OCO SL/TP3 fallo ({pair_s}). "
+            f"Monitor gestionara sin proteccion exchange. Error: {err_oco[:120]}"
+        )
+    return tid
 
 
 def handler(event, context):

@@ -309,6 +309,7 @@ def _close_reason_to_text(reason: str) -> str:
         "SL": "Stop loss alcanzado",
         "TP1": "Take profit 1 alcanzado",
         "TP2": "Take profit 2 alcanzado",
+        "TP3": "Take profit 3 alcanzado",
         "TRAILING_SL": "Trailing stop activado y ejecutado",
         "MANUAL": "Cierre manual confirmado",
         "INVALID": "Operacion cerrada por estado inconsistente",

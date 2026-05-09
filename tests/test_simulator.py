@@ -9,9 +9,27 @@ def test_simulator_hits_tp1_then_tp2():
         "sl_price": 99.0,
         "tp1_price": 101.0,
         "tp2_price": 103.0,
+        "tp3_price": 105.0,
+        "trailing_tp1_tp3_step_pct": 0.03,
         "tp1_hit": False,
         "trailing_activated": False,
     }
     close_reason, updates = evaluate_sim_trade(trade, 101.1)
     assert close_reason is None
     assert updates["tp1_hit"] is True
+
+
+def test_simulator_tp3_after_trailing():
+    trade = {
+        "entry_price": 100.0,
+        "sl_price": 99.0,
+        "tp1_price": 101.0,
+        "tp2_price": 103.0,
+        "tp3_price": 105.0,
+        "trailing_tp1_tp3_step_pct": 0.03,
+        "tp1_hit": True,
+        "trailing_activated": True,
+        "trailing_sl_final": 100.0,
+    }
+    reason, _ = evaluate_sim_trade(trade, 105.0)
+    assert reason == "TP3"

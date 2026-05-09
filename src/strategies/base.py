@@ -22,6 +22,7 @@ class Opportunity:
     sl_price: float
     tp1_price: float
     tp2_price: float
+    tp3_price: float
     sl_type: str
     market_context: MarketContext
     confluence: bool = False
@@ -74,6 +75,7 @@ def simple_long_opportunity(
         sl_price=sl,
         tp1_price=entry + (risk * 1.5),
         tp2_price=entry + (risk * 3.0),
+        tp3_price=entry + (risk * 4.5),
         sl_type=sl_type,
         market_context=ctx,
     )

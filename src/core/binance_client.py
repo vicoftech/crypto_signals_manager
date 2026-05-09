@@ -17,6 +17,11 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
+def oco_list_client_id(trade_id: str) -> str:
+    compact = trade_id.replace("-", "").replace("_", "")[:34]
+    return ("O" + compact)[:36]
+
+
 def exit_order_client_id(trade_id: str) -> str:
     """
     Binance newClientOrderId: max 36 chars, [a-zA-Z0-9-_].
@@ -46,10 +51,10 @@ class BinanceClient:
             else "https://api.binance.com"
         )
         self._timeout = float(os.getenv("BINANCE_HTTP_TIMEOUT", str(_DEFAULT_HTTP_TIMEOUT)) or _DEFAULT_HTTP_TIMEOUT)
-        # symbol -> (step_size, min_qty)
-        self._lot_filters: dict[str, tuple[float, float]] = {}
+        # symbol -> (step_size, min_qty, tick_size)
+        self._lot_filters: dict[str, tuple[float, float, float]] = {}
 
-    def _lot_step_min_qty(self, symbol: str) -> tuple[float, float]:
+    def _symbol_filters(self, symbol: str) -> tuple[float, float, float]:
         if symbol in self._lot_filters:
             return self._lot_filters[symbol]
         resp = requests.get(
@@ -60,18 +65,40 @@ class BinanceClient:
         resp.raise_for_status()
         symbols = (resp.json() or {}).get("symbols") or []
         if not symbols:
-            self._lot_filters[symbol] = (1e-8, 1e-8)
+            self._lot_filters[symbol] = (1e-8, 1e-8, 1e-8)
             return self._lot_filters[symbol]
         filters = symbols[0].get("filters") or []
         step = 1e-8
         min_q = 1e-8
+        tick = 1e-8
         for f in filters:
             if f.get("filterType") == "LOT_SIZE":
                 step = float(f.get("stepSize", step) or step)
                 min_q = float(f.get("minQty", min_q) or min_q)
-                break
-        self._lot_filters[symbol] = (step, min_q)
+            elif f.get("filterType") == "PRICE_FILTER":
+                tick = float(f.get("tickSize", tick) or tick)
+        self._lot_filters[symbol] = (step, min_q, tick)
+        return step, min_q, tick
+
+    def _lot_step_min_qty(self, symbol: str) -> tuple[float, float]:
+        step, min_q, _ = self._symbol_filters(symbol)
         return step, min_q
+
+    def tick_size(self, symbol: str) -> float:
+        _, _, tick = self._symbol_filters(symbol)
+        return tick
+
+    def round_price_to_tick(self, symbol: str, price: float, direction: str = "nearest") -> float:
+        """direction: nearest | up | down"""
+        tick = self.tick_size(symbol)
+        if tick <= 0 or price <= 0:
+            return price
+        units = price / tick
+        if direction == "up":
+            return math.ceil(units - 1e-12) * tick
+        if direction == "down":
+            return math.floor(units + 1e-12) * tick
+        return round(units) * tick
 
     def floor_quantity_to_lot(self, symbol: str, quantity: float) -> float:
         """Cantidad de venta ajustada al stepSize (redondeo hacia abajo)."""
@@ -221,6 +248,70 @@ class BinanceClient:
             headers=self._signed_headers(),
             params=params,
             timeout=max(self._timeout, 5.0),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def price_param_string(self, symbol: str, price: float) -> str:
+        tick = self.tick_size(symbol)
+        if tick <= 0:
+            return f"{price:.8f}".rstrip("0").rstrip(".")
+        if tick >= 1:
+            decimals = 0
+        else:
+            ts = f"{tick:.12f}".rstrip("0").rstrip(".")
+            decimals = len(ts.split(".")[1]) if "." in ts else 8
+        decimals = min(max(decimals, 0), 12)
+        return format(round(price, decimals), f".{decimals}f").rstrip("0").rstrip(".")
+
+    def place_oco_sell_tp_sl(
+        self,
+        pair: str,
+        base_quantity: float,
+        tp_limit_price: float,
+        sl_stop_trigger: float,
+        sl_stop_limit_price: float,
+        list_client_order_id: str,
+    ) -> dict[str, Any]:
+        """
+        OCO SPOT venta: limite en TP (price) + STOP_LOSS_LIMIT (stopPrice/stopLimitPrice).
+        """
+        qty = self.floor_quantity_to_lot(pair, base_quantity)
+        if qty <= 0:
+            raise ValueError(f"OCO qty invalido: {pair} base_quantity={base_quantity}")
+        qty_str = self.quantity_param_string(pair, qty)
+        tp_px = self.round_price_to_tick(pair, tp_limit_price, "up")
+        sl_trig = self.round_price_to_tick(pair, sl_stop_trigger, "down")
+        sl_lim = self.round_price_to_tick(pair, sl_stop_limit_price, "down")
+        lc = str(list_client_order_id or "")[:36]
+        params = self._sign_params(
+            {
+                "symbol": pair,
+                "side": "SELL",
+                "quantity": qty_str,
+                "price": self.price_param_string(pair, tp_px),
+                "stopPrice": self.price_param_string(pair, sl_trig),
+                "stopLimitPrice": self.price_param_string(pair, sl_lim),
+                "stopLimitTimeInForce": "GTC",
+                "listClientOrderId": lc,
+            }
+        )
+        resp = requests.post(
+            f"{self.base_url}/api/v3/order/oco",
+            headers=self._signed_headers(),
+            params=params,
+            timeout=max(self._timeout, 10.0),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def cancel_order_list(self, pair: str, order_list_id: int) -> dict[str, Any]:
+        params = self._sign_params({"symbol": pair, "orderListId": int(order_list_id)})
+        resp = requests.delete(
+            f"{self.base_url}/api/v3/orderList",
+            headers=self._signed_headers(),
+            params=params,
+            timeout=max(self._timeout, 10.0),
         )
         resp.raise_for_status()
         return resp.json()

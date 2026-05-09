@@ -26,6 +26,7 @@ class Settings:
     max_sl_pct: float = float(os.getenv("MAX_SL_PCT", "0.02"))
     trailing_activation: float = float(os.getenv("TRAILING_ACTIVATION", "1.0"))
     trailing_step_pct: float = float(os.getenv("TRAILING_STEP_PCT", "0.005"))
+    trailing_tp1_tp3_step_pct: float = float(os.getenv("TRAILING_TP1_TP3_STEP_PCT", "0.03"))
     entry_drift_max_pct: float = float(os.getenv("ENTRY_DRIFT_MAX_PCT", "0.003"))
     cooldown_minutes: int = int(os.getenv("COOLDOWN_MINUTES", "45"))
     ema_pullback_min_volume_ratio: float = float(os.getenv("EMA_PULLBACK_MIN_VOLUME_RATIO", "1.05"))
