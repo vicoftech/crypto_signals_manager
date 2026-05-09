@@ -173,7 +173,7 @@ class TelegramClient:
             "⚠️ SIN CAPITAL DISPONIBLE\n\n"
             f"📊 {pair}\n"
             f"Capital total:      ${snapshot['capital_total']:,.2f}\n"
-            f"Capital bloqueado:  ${snapshot['capital_bloqueado']:,.2f}  "
+            f"Comprometido libro: ${snapshot['capital_bloqueado']:,.2f}  "
             f"({snapshot['posiciones_abiertas']} posiciones abiertas)\n"
             f"Capital disponible: ${snapshot['capital_disponible']:,.2f}\n"
             f"Riesgo requerido:   ${risk_requerido:,.2f}\n\n"

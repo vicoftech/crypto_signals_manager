@@ -19,8 +19,12 @@ def test_capital_snapshot_has_expected_keys_and_relationships():
     ):
         assert key in snap
 
-    # Relación capital_disponible = capital_total - capital_bloqueado
-    assert snap["capital_disponible"] == snap["capital_total"] - snap["capital_bloqueado"]
+    # Solo en simulacion el modelo cierra: disponible = total interno - nocional ops.
+    if snap.get("capital_context") == "simulation":
+        assert snap["capital_disponible"] == snap["capital_total"] - snap["capital_bloqueado"]
+    elif snap.get("capital_context") == "live_usdt":
+        assert snap["capital_disponible"] <= snap["capital_total"] + 1e-6
+        assert snap["capital_bloqueado"] >= 0
 
     # Invariantes simples
     assert snap["posiciones_abiertas"] >= 0

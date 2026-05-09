@@ -171,26 +171,45 @@ def _handle_command(
         mode = current_live_mode()
         cap = get_capital_snapshot(trades, mode=mode).as_dict()
         pnl_emoji = "📈" if cap["pnl_cerrado"] >= 0 else "📉"
+        risk_pct = config.get_risk_pct(settings.risk_per_trade_pct)
+        riesgo_prox = cap["capital_disponible"] * risk_pct
+        if is_live_mode(mode):
+            dd_text = (
+                f"⚠️ Drawdown saldo USDT vs linea base: {cap['drawdown_actual']:.1%}"
+                if cap["drawdown_actual"] > 0
+                else "✅ Sin drawdown de saldo USDT vs linea base"
+            )
+            ctx = cap.get("capital_context", "")
+            ord_line = ""
+            uo = float(cap.get("usdt_en_ordenes_binance") or 0)
+            if ctx == "live_usdt" and uo > 0.0005:
+                ord_line = f"🔧 USDT en ordenes spot:  ${uo:,.2f}\n"
+            fallback_warn = (
+                "\n⚠️ Sin lectura de Binance: cifras USDT son fallback a config interna.\n"
+                if ctx == "live_fallback"
+                else ""
+            )
+            return (
+                f"💼 CUENTA SPOT — {mode.upper()}\n\n"
+                f"📊 USDT en wallet (Binance):  total ${cap['capital_total']:,.2f}  |  "
+                f"libre ${cap['capital_disponible']:,.2f}\n"
+                f"{ord_line}"
+                f"🔒 Comprometido segun libro ({cap['posiciones_abiertas']} ops):  "
+                f"${cap['capital_bloqueado']:,.2f}\n"
+                f"(nocional al entrar; el capital esta en moneda BASE salvo ordenes USDT)\n\n"
+                f"{pnl_emoji} Delta saldo USDT vs linea base de sesion:  "
+                f"${cap['pnl_cerrado']:+,.2f}\n"
+                f"(solo efectivo USDT; no es NAV ni el neto de /resumen)\n"
+                f"{fallback_warn}"
+                f"{dd_text}\n"
+                f"Proxima posicion (~):       ${riesgo_prox:,.2f}  "
+                f"({risk_pct*100:.3f}% del USDT libre)"
+            )
         dd_text = (
             f"⚠️ Drawdown: {cap['drawdown_actual']:.1%}"
             if cap["drawdown_actual"] > 0
             else "✅ Sin drawdown"
         )
-        risk_pct = config.get_risk_pct(settings.risk_per_trade_pct)
-        riesgo_prox = cap["capital_disponible"] * risk_pct
-        if is_live_mode(mode):
-            note = cap.get("equity_note")
-            note_line = f"\n📝 {note}\n" if note else ""
-            return (
-                f"💼 CAPITAL BINANCE ({mode.upper()})\n\n"
-                f"{pnl_emoji} P&L Binance:      ${cap['pnl_cerrado']:+,.2f}\n"
-                f"✅ Disponible:        ${cap['capital_disponible']:,.2f}\n"
-                f"🔒 Bloqueado:         ${cap['capital_bloqueado']:,.2f}\n"
-                f"📊 Total cuenta:      ${cap['capital_total']:,.2f}\n"
-                f"{note_line}"
-                f"{dd_text}\n"
-                f"Proxima posicion:      ${riesgo_prox:,.2f}  ({risk_pct*100:.3f}% del disponible)"
-            )
         return (
             "💼 ESTADO DEL CAPITAL SIMULADO\n\n"
             f"💰 Capital inicial:    ${cap['capital_inicial']:,.2f}\n"
@@ -645,7 +664,8 @@ def _process_telegram_update(update: dict) -> None:
             mode = current_live_mode()
             snap = get_capital_snapshot(mode=mode).as_dict()
             cap_line = (
-                f"- capital_disponible: {snap['capital_disponible']:.2f} ({mode})"
+                f"- USDT libre: {snap['capital_disponible']:.2f} | "
+                f"comprometido libro: {snap['capital_bloqueado']:.2f} ({mode})"
                 if is_live_mode(mode)
                 else f"- capital_total: {config.get_capital(settings.capital_total):.2f}"
             )
