@@ -148,10 +148,13 @@ aws ssm get-parameters \
   - `cd infra/terraform/state`
   - `AWS_PROFILE=asap_main terraform init`
   - `AWS_PROFILE=asap_main terraform apply -auto-approve`
-- Deploy de app:
-  - `cd ../app`
-  - `AWS_PROFILE=asap_main terraform init`
+- **OIDC GitHub (una vez):** `infra/terraform/github-oidc` → ver `docs/CI_DEPLOY.md`
+- Deploy de app (local):
+  - `bash scripts/build_lambda_bundle.sh`
+  - `cd infra/terraform/app`
+  - `AWS_PROFILE=asap_main terraform init -backend-config=backends/local.hcl`
   - `AWS_PROFILE=asap_main terraform apply -auto-approve -var="telegram_bot_token=TU_TOKEN" -var="telegram_chat_id=TU_CHAT_ID"`
+- **CI:** push a `main` ejecuta `.github/workflows/deploy.yml` (requiere secrets `AWS_ROLE_ARN`, Telegram).
 
 ## Nota
 

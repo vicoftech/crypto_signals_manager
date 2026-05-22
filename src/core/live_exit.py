@@ -2,10 +2,40 @@ from __future__ import annotations
 
 import logging
 
-from src.core.binance_client import BinanceClient, exit_order_client_id, oco_list_client_id
+from src.core.binance_client import (
+    BinanceClient,
+    exit_order_client_id,
+    oco_list_client_id,
+    stop_order_client_id,
+)
+from src.core.tp_ladder import tp_max_price
 from src.core.trades_manager import TradesManager
 
 logger = logging.getLogger(__name__)
+
+
+def _oco_active(trade: dict) -> bool:
+    oid = trade.get("binance_oco_order_list_id")
+    if oid is None:
+        return False
+    s = str(oid).strip()
+    return bool(s) and s not in ("0", "None")
+
+
+def _cancel_exchange_protections(binance: BinanceClient, trade: dict, pair: str) -> None:
+    tid = str(trade.get("trade_id", ""))
+    oco_oid = trade.get("binance_oco_order_list_id")
+    if oco_oid and str(oco_oid).strip() not in ("", "0", "None"):
+        try:
+            binance.cancel_order_list(pair, int(float(oco_oid)))
+        except Exception:
+            logger.warning("cancel OCO fallo trade=%s", tid, exc_info=True)
+    stop_oid = trade.get("binance_stop_order_id")
+    if stop_oid and str(stop_oid).strip():
+        try:
+            binance.cancel_order(pair, int(float(stop_oid)))
+        except Exception:
+            logger.warning("cancel stop fallo trade=%s", tid, exc_info=True)
 
 
 def attach_oco_protections(
@@ -16,15 +46,24 @@ def attach_oco_protections(
     base_qty: float,
     sl_price: float,
     tp3_price: float,
+    entry_price: float | None = None,
 ) -> tuple[bool, str]:
-    """OCO venta: limite TP3 + stop SL. Devuelve (ok, mensaje_error)."""
+    """
+    Proteccion inicial en exchange: OCO con SL + limite en TP maximo (techo lejano).
+    La escalera TP1..TPn la gestiona el position_monitor (no vende en TP3 del OCO salvo moonshot).
+    tp3_price se ignora si hay entry_price; se usa tp_max_price.
+    """
     try:
+        entry = float(entry_price or 0)
+        if entry <= 0:
+            entry = float(tp3_price) / 4.5 * 3.5 if tp3_price else 0
+        ceiling = tp_max_price(entry, sl_price) if entry > sl_price else float(tp3_price)
         tick = binance.tick_size(pair)
         sl_lim = binance.round_price_to_tick(pair, max(sl_price - tick * 2, sl_price * 0.9999), "down")
         oco = binance.place_oco_sell_tp_sl(
             pair,
             base_qty,
-            tp3_price,
+            ceiling,
             sl_price,
             sl_lim,
             oco_list_client_id(trade_id),
@@ -43,6 +82,52 @@ def attach_oco_protections(
                 "binance_oco_order_list_id": str(oco.get("orderListId", "")),
                 "binance_oco_limit_order_id": lim_id,
                 "binance_oco_stop_order_id": stop_id,
+                "binance_stop_order_id": "",
+                "tp_max_price": ceiling,
+            },
+        )
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def sync_ladder_stop_on_exchange(
+    binance: BinanceClient,
+    trades: TradesManager,
+    trade: dict,
+    ladder_level: int,
+    stop_price: float,
+) -> tuple[bool, str]:
+    """Tras subir escalera: cancela OCO/stop previo y coloca STOP en active_stop."""
+    tid = str(trade.get("trade_id", ""))
+    pair = str(trade.get("pair", ""))
+    qty = float(trade.get("base_qty") or 0)
+    if qty <= 0:
+        ep = float(trade.get("entry_price") or 0)
+        ps = float(trade.get("position_size_usd") or 0)
+        qty = ps / max(ep, 1e-9)
+    try:
+        _cancel_exchange_protections(binance, trade, pair)
+        tick = binance.tick_size(pair)
+        sl_lim = binance.round_price_to_tick(
+            pair, max(stop_price - tick * 2, stop_price * 0.9999), "down"
+        )
+        order = binance.place_stop_loss_sell(
+            pair,
+            qty,
+            stop_price,
+            sl_lim,
+            stop_order_client_id(tid, ladder_level),
+        )
+        trades.update_trade(
+            tid,
+            {
+                "binance_oco_order_list_id": "",
+                "binance_oco_limit_order_id": "",
+                "binance_oco_stop_order_id": "",
+                "binance_stop_order_id": str(order.get("orderId", "")),
+                "active_stop_price": stop_price,
+                "ladder_level": ladder_level,
             },
         )
         return True, ""
@@ -73,16 +158,10 @@ def close_live_trade_with_market_sell(
 ) -> tuple[bool, str]:
     """
     Venta MARKET en SPOT y cierre en Dynamo. fallback_price si la orden no devuelve precio medio.
-    Devuelve (exito, mensaje_error_vacio_si_ok).
     """
     tid = str(trade.get("trade_id", ""))
     pair = str(trade.get("pair", ""))
-    oco_oid = trade.get("binance_oco_order_list_id")
-    if oco_oid and str(oco_oid).strip() not in ("", "0", "None"):
-        try:
-            binance.cancel_order_list(pair, int(float(oco_oid)))
-        except Exception:
-            logger.warning("cancel OCO antes de market sell fallo trade=%s", tid, exc_info=True)
+    _cancel_exchange_protections(binance, trade, pair)
 
     base_qty = float(trade.get("base_qty") or 0)
     if base_qty <= 0:
@@ -106,6 +185,7 @@ def close_live_trade_with_market_sell(
         {
             "binance_exit_order_id": str(sell_order.get("orderId", "")),
             "pending_exit_client_order_id": "",
+            "binance_stop_order_id": "",
         },
     )
     trades.close_trade(tid, close_reason, exit_px)

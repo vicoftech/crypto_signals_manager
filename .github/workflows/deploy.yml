@@ -1,0 +1,71 @@
+# Deploy Lambdas + Terraform app on push to main (OIDC, sin access keys).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: main
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build Lambda bundle (manylinux)
+        run: |
+          bash scripts/build_lambda_bundle.sh
+          ls -la build/lambda_bundle.zip
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra/terraform/app
+        run: |
+          terraform init -input=false -backend-config=backends/ci.hcl
+
+      - name: Terraform apply
+        working-directory: infra/terraform/app
+        env:
+          TF_VAR_aws_profile: ""
+          TF_VAR_telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TF_VAR_telegram_chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          terraform apply -auto-approve -input=false
+
+      - name: Deployment summary
+        working-directory: infra/terraform/app
+        run: |
+          echo "## Deploy OK" >> "$GITHUB_STEP_SUMMARY"
+          terraform output -json | jq -r 'to_entries[] | "- \(.key): \(.value.value)"' >> "$GITHUB_STEP_SUMMARY" || true

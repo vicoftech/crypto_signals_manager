@@ -4,6 +4,7 @@ from dataclasses import asdict
 
 from src.config import settings
 from src.core.capital import get_capital_snapshot
+from src.core.tp_ladder import ladder_payload_defaults
 from src.strategies.base import Opportunity
 
 
@@ -55,6 +56,7 @@ def with_risk(op: Opportunity, entry_actual_price: float) -> dict:
             "trailing_step_pct": settings.trailing_step_pct,
             "trailing_tp1_tp3_step_pct": settings.trailing_tp1_tp3_step_pct,
             "tp3_price": float(op.tp3_price),
+            **ladder_payload_defaults(entry_actual_price, float(op.sl_price)),
         }
     )
     return data

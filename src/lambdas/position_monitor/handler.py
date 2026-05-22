@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from src.core.auto_sim_utils import apply_sl_close_slippage, apply_trailing_close_slippage
 from src.core.binance_client import BinanceClient
-from src.core.live_exit import close_live_trade_with_market_sell
+from src.core.live_exit import close_live_trade_with_market_sell, sync_ladder_stop_on_exchange
 from src.core.config_store import ConfigStore
 from src.core.mode import MODE_SIMULATION, normalize_mode
 from src.core.pairs_manager import PairsManager
@@ -40,14 +40,6 @@ def _trade_label(mode_raw: str | None) -> str:
     if normalize_mode(mode_raw) == MODE_SIMULATION:
         return "[SIM]"
     return f"[{normalize_mode(mode_raw).upper()}]"
-
-
-def _oco_list_active(trade: dict) -> bool:
-    oid = trade.get("binance_oco_order_list_id")
-    if oid is None:
-        return False
-    s = str(oid).strip()
-    return bool(s) and s not in ("0", "None")
 
 
 def _emit_closed_notifications(
@@ -161,11 +153,17 @@ def handler(event, context):
         if close_reason:
             exit_px = float(price)
             pair = str(trade.get("pair", ""))
-            if close_reason == "TRAILING_SL" and trade.get("trailing_sl_final") is not None:
-                exit_px = apply_trailing_close_slippage(
-                    float(trade["trailing_sl_final"]),
-                    pair,
-                )
+            if close_reason.startswith("SL_TP") or close_reason == "TRAILING_SL":
+                if trade.get("active_stop_price") is not None:
+                    exit_px = apply_trailing_close_slippage(
+                        float(trade["active_stop_price"]),
+                        pair,
+                    )
+                elif trade.get("trailing_sl_final") is not None:
+                    exit_px = apply_trailing_close_slippage(
+                        float(trade["trailing_sl_final"]),
+                        pair,
+                    )
             elif close_reason == "SL":
                 sl_level = float(trade.get("sl_price", price) or price)
                 exit_px = apply_sl_close_slippage(sl_level, pair)
@@ -183,49 +181,40 @@ def handler(event, context):
             trades.update_trade(tid, exc)
             trade = trades.get_trade(tid) or trade
 
-        if _oco_list_active(trade) and not trade.get("tp1_hit"):
-            tp1_px = float(trade.get("tp1_price", 0) or 0)
-            tp3_px = float(trade.get("tp3_price", 0) or 0)
-            if tp1_px > 0 and price >= tp1_px:
-                try:
-                    binance.cancel_order_list(pair, int(float(trade["binance_oco_order_list_id"])))
-                except Exception:
-                    logger.exception("cancel OCO al TP1 trade_id=%s", tid)
-                    telegram.send_trade_update(
-                        f"⚠️ No se pudo cancelar OCO en {pair} (TP1). "
-                        "Revisa ordenes en Binance."
-                    )
-                entry_px = float(trade.get("entry_price", 0) or 0)
-                trades.update_trade(
-                    tid,
-                    {
-                        "tp1_hit": True,
-                        "trailing_activated": True,
-                        "trailing_sl_final": entry_px,
-                        "binance_oco_order_list_id": "",
-                        "binance_oco_limit_order_id": "",
-                        "binance_oco_stop_order_id": "",
-                    },
-                )
-                telegram.send_trade_update(
-                    f"📍 Trailing TP1→TP3 ({pair})\n"
-                    f"OCO cancelado. TP3 objetivo ~ {tp3_px:.4f}\n"
-                    "Seguimiento cada ~5 min (velas 30m+)."
-                )
-            continue
-
+        prev_level = int(trade.get("ladder_level") or 0)
         close_reason, updates = evaluate_sim_trade(trade, price)
         if close_reason == "INVALID_TRADE_DATA":
             continue
         if updates:
             trades.update_trade(tid, updates)
             trade = trades.get_trade(tid) or trade
+        new_level = int(trade.get("ladder_level") or 0)
+        if new_level > prev_level:
+            stop_px = float(trade.get("active_stop_price") or 0)
+            ok_sync, err_sync = sync_ladder_stop_on_exchange(
+                binance, trades, trade, new_level, stop_px
+            )
+            if ok_sync:
+                telegram.send_trade_update(
+                    f"📍 Escalera TP{new_level} ({pair})\n"
+                    f"SL en exchange ~ {stop_px:.4f}. Objetivo siguiente TP.\n"
+                    "Salida unica al retroceder al piso."
+                )
+            else:
+                telegram.send_trade_update(
+                    f"⚠️ TP{new_level} en {pair} pero stop en exchange fallo: {err_sync[:100]}\n"
+                    "Monitor cerrara por precio si retrocede."
+                )
+            trade = trades.get_trade(tid) or trade
         if not close_reason:
             continue
 
         exit_px = float(price)
-        if close_reason == "TRAILING_SL" and trade.get("trailing_sl_final") is not None:
-            exit_px = apply_trailing_close_slippage(float(trade["trailing_sl_final"]), pair)
+        if close_reason.startswith("SL_TP") or close_reason == "TRAILING_SL":
+            floor_px = float(
+                trade.get("active_stop_price") or trade.get("trailing_sl_final") or price
+            )
+            exit_px = apply_trailing_close_slippage(floor_px, pair)
         elif close_reason == "SL":
             exit_px = apply_sl_close_slippage(float(trade.get("sl_price", price) or price), pair)
 

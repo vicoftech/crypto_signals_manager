@@ -4,8 +4,9 @@ variable "aws_region" {
 }
 
 variable "aws_profile" {
-  type    = string
-  default = "asap_main"
+  type        = string
+  default     = "asap_main"
+  description = "Dejar vacío en CI (GitHub OIDC). Local: asap_main"
 }
 
 variable "telegram_bot_token" {

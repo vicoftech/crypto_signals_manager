@@ -5,6 +5,7 @@ import random
 from typing import Any
 
 from src.config import settings
+from src.core.tp_ladder import ladder_payload_defaults
 
 ENTRY_SLIPPAGE: dict[str, tuple[float, float]] = {
     "BTCUSDT": (0.0001, 0.0003),
@@ -124,8 +125,7 @@ def trade_payload_from_op_data(op: dict[str, Any], sim_source: str) -> dict[str,
         "risk_usd": float(op.get("risk_usd", 0) or 0),
         "rr_ratio": planned_rr,
         "rr_planned": planned_rr,
-        "tp1_hit": False,
-        "trailing_activated": False,
+        **ladder_payload_defaults(ent, float(op["sl_price"])),
         "entry_commission_usd": entry_comm,
         "slippage_pct": float(op.get("drift_pct", 0) or 0),
         "sim_source": sim_source,

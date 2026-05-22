@@ -8,6 +8,7 @@ import uuid
 from src.config import settings
 from src.core.binance_client import BinanceClient
 from src.core.live_exit import attach_oco_protections
+from src.core.tp_ladder import ladder_payload_defaults
 from src.core.calculator import InsufficientCapitalError, with_risk
 from src.core.config_store import ConfigStore
 from src.core.filters import needs_drift_recalc, passes_quality_filters
@@ -70,8 +71,7 @@ def _open_real_trade_from_opportunity(op_data: dict) -> str:
         "risk_usd": float(op_data.get("risk_usd", 0) or 0),
         "rr_ratio": float(op_data.get("rr_ratio", 0) or 0),
         "rr_planned": float(op_data.get("rr_ratio", 0) or 0),
-        "tp1_hit": False,
-        "trailing_activated": False,
+        **ladder_payload_defaults(entry_price, float(op_data["sl_price"])),
         "entry_commission_usd": float(first_fill.get("commission", quote_qty * 0.001) or 0),
         "entry_order_status": str(order.get("status", "")),
         "binance_order_id": str(order.get("orderId", "")),
@@ -93,6 +93,7 @@ def _open_real_trade_from_opportunity(op_data: dict) -> str:
         executed_qty,
         float(op_data["sl_price"]),
         float(op_data["tp3_price"]),
+        entry_price=entry_price,
     )
     if ok_oco:
         logger.info("OCO colocado trade_id=%s", tid)
@@ -191,6 +192,15 @@ def handler(event, context):
                     not auto_trade_strategies or strategy_name in auto_trade_strategies
                 )
                 if auto_trade_enabled and strategy_allowed_for_auto:
+                    ok_open, open_reason = trades.can_open_live_trade(pair_cfg.pair)
+                    if not ok_open:
+                        logger.info(
+                            "skip auto_trade %s %s: %s",
+                            pair_cfg.pair,
+                            strategy_name,
+                            open_reason,
+                        )
+                        continue
                     try:
                         trade_id = _open_real_trade_from_opportunity(op_data)
                     except Exception as e:

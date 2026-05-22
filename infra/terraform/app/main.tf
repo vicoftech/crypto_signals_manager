@@ -1,14 +1,7 @@
 terraform {
   required_version = ">= 1.5.0"
 
-  backend "s3" {
-    bucket         = "crypto-trading-bot-tfstate-913123310997"
-    key            = "app/terraform.tfstate"
-    region         = "ap-northeast-1"
-    dynamodb_table = "crypto-trading-bot-tflock"
-    profile        = "asap_main"
-    encrypt        = true
-  }
+  backend "s3" {}
 
   required_providers {
     aws = {
@@ -19,8 +12,9 @@ terraform {
 }
 
 provider "aws" {
-  region  = var.aws_region
-  profile = var.aws_profile
+  region = var.aws_region
+  # Vacío en CI (OIDC). Local: -backend-config=backends/local.hcl y aws_profile=asap_main
+  profile = var.aws_profile != "" ? var.aws_profile : null
 }
 
 data "aws_caller_identity" "current" {}
@@ -333,6 +327,9 @@ locals {
     TRAILING_ACTIVATION                = "1.0"
     TRAILING_STEP_PCT                  = "0.005"
     TRAILING_TP1_TP3_STEP_PCT          = "0.03"
+    TP_R_STEP                          = "1.5"
+    MAX_TP_LEVEL                       = "6"
+    MAX_CONCURRENT_LIVE_OPEN           = "1"
     CLOSED_NOTIFY_MAX_AGE_HOURS        = "72"
     ENTRY_DRIFT_MAX_PCT                = "0.003"
     COOLDOWN_MINUTES                   = "45"

@@ -505,6 +505,7 @@ def _handle_callback(callback_query: dict) -> str:
     from src.config import binance_credentials_configured, settings
     from src.core.binance_client import BinanceClient
     from src.core.live_exit import attach_oco_protections
+    from src.core.tp_ladder import ladder_payload_defaults
     from src.core.mode import MODE_SIMULATION, current_live_mode
     from src.core.trades_manager import TradesManager
 
@@ -524,6 +525,10 @@ def _handle_callback(callback_query: dict) -> str:
         )
 
     trades = TradesManager()
+    if action == "ENTER":
+        ok_open, open_reason = trades.can_open_live_trade(pair)
+        if not ok_open:
+            return f"No se puede abrir {pair}: {open_reason}"
     mode = current_live_mode() if action == "ENTER" else MODE_SIMULATION
     entry_price = float(entry)
     sl_price = entry_price * 0.99
@@ -545,8 +550,6 @@ def _handle_callback(callback_query: dict) -> str:
         "risk_usd": settings.capital_total * settings.risk_per_trade_pct,
         "entry_commission_usd": size * 0.001,
         "sim_source": "telegram_callback",
-        "tp1_hit": False,
-        "trailing_activated": False,
         "timeframe": "30m",
         "max_favorable_excursion": entry_price,
         "max_adverse_excursion": entry_price,
@@ -575,6 +578,7 @@ def _handle_callback(callback_query: dict) -> str:
         ent_f = float(payload["entry_price"])
         risk_f = ent_f - sl_price
         payload["tp3_price"] = ent_f + risk_f * 4.5
+        payload.update(ladder_payload_defaults(ent_f, sl_price))
         trade_id = trades.open_trade(payload, mode=mode, trade_id=trade_id)
         ok_o, err_o = attach_oco_protections(
             client,
@@ -584,12 +588,14 @@ def _handle_callback(callback_query: dict) -> str:
             float(payload["base_qty"]),
             float(sl_price),
             float(payload["tp3_price"]),
+            entry_price=ent_f,
         )
         if not ok_o:
             return (
                 f"Compra OK pero OCO fallo: {err_o[:100]}\n{pair} trade_id={trade_id}"
             )
     else:
+        payload.update(ladder_payload_defaults(entry_price, sl_price))
         trade_id = trades.open_trade(payload, mode=mode)
     label = "Orden LIVE enviada" if action == "ENTER" else "Simulacion iniciada"
     return f"{label}\n{pair} | {strategy}\nmode: {mode}\ntrade_id: {trade_id}"
@@ -606,6 +612,8 @@ def _reason_text_from_code(code: str | None) -> str:
         "MANUAL": "Cierre manual confirmado",
         "INVALID": "Operacion cerrada por estado inconsistente",
     }
+    if normalized.startswith("SL_TP") and len(normalized) > 5:
+        return f"Retroceso al piso TP{normalized[5:]} (escalera)"
     return mapping.get(normalized, f"Cierre por {normalized or 'motivo no informado'}")
 
 

@@ -24,24 +24,35 @@ def handler(event, context):
     side = str(parsed.get("side", "")).upper()
     symbol = str(parsed.get("symbol") or "").upper()
 
-    # Salida: piernas OCO (TP3 limit / SL stop) antes que otras ventas
+    # Salida: piernas OCO (TP3 limit / SL stop) antes que otras ventas (solo modo REAL)
     if status == "FILLED" and side == "SELL":
         exit_price = float(parsed.get("avg_price", 0) or 0)
         for t in trades.list_open():
+            if not is_live_mode(t.get("mode")):
+                continue
             tid = str(t.get("trade_id", ""))
             if str(t.get("binance_oco_limit_order_id", "")) == order_id:
                 if exit_price <= 0:
                     exit_price = float(t.get("entry_price", 0) or 0)
-                trades.close_trade(tid, "TP3", exit_price)
-                return {"ok": True, "closed_trade_id": tid, "via": "oco_tp"}
+                lvl = int(t.get("ladder_level") or t.get("tp_max_level") or 6)
+                trades.close_trade(tid, f"TP{lvl}" if lvl <= 6 else "TP_MAX", exit_price)
+                return {"ok": True, "closed_trade_id": tid, "via": "oco_ceiling"}
             if str(t.get("binance_oco_stop_order_id", "")) == order_id:
                 if exit_price <= 0:
                     exit_price = float(t.get("entry_price", 0) or 0)
                 trades.close_trade(tid, "SL", exit_price)
                 return {"ok": True, "closed_trade_id": tid, "via": "oco_sl"}
+            if str(t.get("binance_stop_order_id", "")) == order_id:
+                if exit_price <= 0:
+                    exit_price = float(t.get("active_stop_price", 0) or 0)
+                lvl = int(t.get("ladder_level") or 1)
+                trades.close_trade(tid, f"SL_TP{lvl}", exit_price)
+                return {"ok": True, "closed_trade_id": tid, "via": "ladder_stop"}
 
         matched = None
         for t in trades.list_open():
+            if not is_live_mode(t.get("mode")):
+                continue
             if str(t.get("binance_exit_order_id", "")) == order_id:
                 matched = t
                 break
@@ -67,8 +78,10 @@ def handler(event, context):
 
         return {"ok": True, "event": parsed, "matched": False}
 
-    # Entrada u otros eventos del BUY por orderId de la compra
+    # Entrada u otros eventos del BUY por orderId de la compra (solo REAL)
     for t in trades.list_open():
+        if not is_live_mode(t.get("mode")):
+            continue
         if str(t.get("binance_order_id", "")) != order_id:
             continue
         if side == "BUY":

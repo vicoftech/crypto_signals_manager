@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import boto3
 
+from src.config import settings
 from src.core.market_session import format_market_session
 from src.core.mode import MODE_SIMULATION, normalize_mode, is_simulation_mode, is_live_mode
 
@@ -292,6 +293,24 @@ class TradesManager:
                 return t
         return None
 
+    def can_open_live_trade(self, pair: str) -> tuple[bool, str]:
+        """
+        live/live_test: max N posiciones abiertas (default 1) y como mucho una por par.
+        """
+        max_n = int(settings.max_concurrent_live_open)
+        opens = self.get_open_live_trades()
+        if len(opens) >= max_n:
+            busy = ", ".join(
+                f"{t.get('pair')}({t.get('trade_id', '')[:8]})" for t in opens[:3]
+            )
+            return (
+                False,
+                f"max_concurrent_live_open={max_n} (abiertas: {busy})",
+            )
+        if self.find_open_real_by_pair(pair):
+            return False, f"ya_hay_operacion_abierta_en_{pair}"
+        return True, ""
+
 
 def _to_dynamodb_types(value):
     if isinstance(value, float):
@@ -314,4 +333,7 @@ def _close_reason_to_text(reason: str) -> str:
         "MANUAL": "Cierre manual confirmado",
         "INVALID": "Operacion cerrada por estado inconsistente",
     }
+    if normalized.startswith("SL_TP") and len(normalized) > 5:
+        n = normalized[5:]
+        return f"Retroceso al piso TP{n} (ganancia asegurada en escalera)"
     return mapping.get(normalized, f"Cierre por {normalized or 'motivo no informado'}")

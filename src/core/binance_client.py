@@ -22,6 +22,11 @@ def oco_list_client_id(trade_id: str) -> str:
     return ("O" + compact)[:36]
 
 
+def stop_order_client_id(trade_id: str, level: int) -> str:
+    compact = trade_id.replace("-", "").replace("_", "")[:32]
+    return (f"S{level}" + compact)[:36]
+
+
 def exit_order_client_id(trade_id: str) -> str:
     """
     Binance newClientOrderId: max 36 chars, [a-zA-Z0-9-_].
@@ -298,6 +303,55 @@ class BinanceClient:
         )
         resp = requests.post(
             f"{self.base_url}/api/v3/order/oco",
+            headers=self._signed_headers(),
+            params=params,
+            timeout=max(self._timeout, 10.0),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def cancel_order(self, pair: str, order_id: int) -> dict[str, Any]:
+        params = self._sign_params({"symbol": pair, "orderId": int(order_id)})
+        resp = requests.delete(
+            f"{self.base_url}/api/v3/order",
+            headers=self._signed_headers(),
+            params=params,
+            timeout=max(self._timeout, 10.0),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def place_stop_loss_sell(
+        self,
+        pair: str,
+        base_quantity: float,
+        stop_trigger: float,
+        stop_limit: float,
+        client_order_id: str,
+    ) -> dict[str, Any]:
+        """STOP_LOSS_LIMIT venta: protege piso de escalera TP."""
+        qty = self.floor_quantity_to_lot(pair, base_quantity)
+        if qty <= 0:
+            raise ValueError(f"stop sell qty invalido: {pair} qty={base_quantity}")
+        trig = self.round_price_to_tick(pair, stop_trigger, "down")
+        lim = self.round_price_to_tick(pair, stop_limit, "down")
+        tick = self.tick_size(pair)
+        if lim > trig:
+            lim = max(trig - tick, trig * 0.999)
+        params = self._sign_params(
+            {
+                "symbol": pair,
+                "side": "SELL",
+                "type": "STOP_LOSS_LIMIT",
+                "timeInForce": "GTC",
+                "quantity": self.quantity_param_string(pair, qty),
+                "stopPrice": self.price_param_string(pair, trig),
+                "price": self.price_param_string(pair, lim),
+                "newClientOrderId": str(client_order_id or "")[:36],
+            }
+        )
+        resp = requests.post(
+            f"{self.base_url}/api/v3/order",
             headers=self._signed_headers(),
             params=params,
             timeout=max(self._timeout, 10.0),
