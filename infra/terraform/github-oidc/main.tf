@@ -25,7 +25,10 @@ locals {
   pr_subjects = var.allow_pull_request ? [
     "repo:${var.github_org}/${var.github_repo}:pull_request",
   ] : []
-  repo_subjects = concat(local.branch_subjects, local.pr_subjects)
+  environment_subjects = [
+    for e in var.github_environments : "repo:${var.github_org}/${var.github_repo}:environment:${e}"
+  ]
+  repo_subjects = concat(local.branch_subjects, local.pr_subjects, local.environment_subjects)
 }
 
 # Thumbprint oficial GitHub Actions (token.actions.githubusercontent.com)
@@ -116,7 +119,6 @@ data "aws_iam_policy_document" "deploy" {
     effect = "Allow"
     actions = [
       "lambda:*",
-      "iam:*",
       "events:*",
       "apigateway:*",
       "logs:*",
@@ -134,6 +136,40 @@ data "aws_iam_policy_document" "deploy" {
       variable = "aws:RequestedRegion"
       values   = [var.aws_region]
     }
+  }
+
+  # IAM es global: aws:RequestedRegion no aplica y el bloque regional no autoriza GetRole, etc.
+  statement {
+    sid    = "IAMProjectRoles"
+    effect = "Allow"
+    actions = [
+      "iam:GetRole",
+      "iam:CreateRole",
+      "iam:UpdateRole",
+      "iam:DeleteRole",
+      "iam:GetRolePolicy",
+      "iam:PutRolePolicy",
+      "iam:DeleteRolePolicy",
+      "iam:ListRolePolicies",
+      "iam:ListAttachedRolePolicies",
+      "iam:AttachRolePolicy",
+      "iam:DetachRolePolicy",
+      "iam:TagRole",
+      "iam:UntagRole",
+      "iam:ListRoleTags",
+    ]
+    resources = ["arn:aws:iam::${local.account_id}:role/crypto-trading-bot*"]
+  }
+
+  statement {
+    sid    = "IAMReadAwsManagedPolicies"
+    effect = "Allow"
+    actions = [
+      "iam:GetPolicy",
+      "iam:GetPolicyVersion",
+      "iam:ListPolicyVersions",
+    ]
+    resources = ["arn:aws:iam::aws:policy/*"]
   }
 
   statement {

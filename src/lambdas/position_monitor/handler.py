@@ -6,7 +6,11 @@ from datetime import datetime, timedelta, timezone
 
 from src.core.auto_sim_utils import apply_sl_close_slippage, apply_trailing_close_slippage
 from src.core.binance_client import BinanceClient
-from src.core.live_exit import close_live_trade_with_market_sell, sync_ladder_stop_on_exchange
+from src.core.live_exit import (
+    close_live_trade_with_market_sell,
+    has_exchange_exit_protection,
+    sync_ladder_stop_on_exchange,
+)
 from src.core.config_store import ConfigStore
 from src.core.mode import MODE_SIMULATION, normalize_mode
 from src.core.pairs_manager import PairsManager
@@ -208,6 +212,46 @@ def handler(event, context):
             trade = trades.get_trade(tid) or trade
         if not close_reason:
             continue
+
+        # Salida por SL / piso escalera: la orden en Binance define el fill (~risk_usd).
+        # No vender MARKET si ya hay OCO/STOP (evita -5 USD cuando risk_usd era ~0.5).
+        if close_reason == "SL" or close_reason.startswith("SL_TP"):
+            if has_exchange_exit_protection(trade):
+                logger.info(
+                    "live exit defer exchange trade_id=%s pair=%s reason=%s",
+                    tid,
+                    pair,
+                    close_reason,
+                )
+                continue
+            floor_px = float(
+                trade.get("active_stop_price")
+                if close_reason.startswith("SL_TP")
+                else trade.get("sl_price")
+                or price
+            )
+            if floor_px > 0:
+                ok_stop, err_stop = sync_ladder_stop_on_exchange(
+                    binance,
+                    trades,
+                    trade,
+                    int(trade.get("ladder_level") or 0),
+                    floor_px,
+                )
+                if ok_stop:
+                    logger.info(
+                        "live exit placed STOP trade_id=%s pair=%s @ %.6f",
+                        tid,
+                        pair,
+                        floor_px,
+                    )
+                    continue
+                logger.warning(
+                    "live exit STOP failed trade_id=%s: %s; no MARKET fallback for SL",
+                    tid,
+                    err_stop,
+                )
+                continue
 
         exit_px = float(price)
         if close_reason.startswith("SL_TP") or close_reason == "TRAILING_SL":

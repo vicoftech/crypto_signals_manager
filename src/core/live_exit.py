@@ -22,6 +22,17 @@ def _oco_active(trade: dict) -> bool:
     return bool(s) and s not in ("0", "None")
 
 
+def has_exchange_exit_protection(trade: dict) -> bool:
+    """OCO o STOP en Binance deben ejecutar la salida; el monitor no hace MARKET encima."""
+    if _oco_active(trade):
+        return True
+    stop_oid = trade.get("binance_stop_order_id")
+    if stop_oid is None:
+        return False
+    s = str(stop_oid).strip()
+    return bool(s) and s not in ("0", "None")
+
+
 def _cancel_exchange_protections(binance: BinanceClient, trade: dict, pair: str) -> None:
     tid = str(trade.get("trade_id", ""))
     oco_oid = trade.get("binance_oco_order_list_id")

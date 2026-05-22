@@ -33,6 +33,12 @@ variable "allow_pull_request" {
   description = "Permite terraform plan desde workflows de pull_request."
 }
 
+variable "github_environments" {
+  type        = list(string)
+  default     = ["main"]
+  description = "GitHub Environments (sub claim environment:<name>). Requerido si el workflow usa environment: main."
+}
+
 variable "role_name" {
   type    = string
   default = "crypto-trading-bot-github-actions-deploy"

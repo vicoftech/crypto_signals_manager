@@ -14,9 +14,11 @@ class InsufficientCapitalError(Exception):
 
 def with_risk(op: Opportunity, entry_actual_price: float) -> dict:
     """
-    MODELO SPOT DIRECTO:
-    - position_size_usd = capital_disponible * risk_pct  (monto invertido; alineado con /capital)
-    - risk_usd = position_size_usd * sl_pct         (pérdida esperada al SL)
+    MODELO SPOT (alineado con /capital y /riesgo):
+    - position_size_usd = capital_disponible * risk_pct   (ej. 5% del libre → ~50 USD)
+    - risk_usd = position_size_usd * sl_pct              (ej. ~1% del nocional al SL → ~0.50 USD)
+    La pérdida real solo coincide si la salida ocurre en el SL (orden en exchange), no con MARKET
+    en picada.
     """
     sl_pct = (entry_actual_price - op.sl_price) / entry_actual_price
     if sl_pct <= 0:

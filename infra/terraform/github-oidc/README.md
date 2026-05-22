@@ -20,9 +20,12 @@ Copia el output `deploy_role_arn` y configúralo en el repo de GitHub:
 
 El workflow `.github/workflows/deploy.yml` asume este rol vía OIDC al push en `main`.
 
-## Ampliar ramas o repos
+## Ampliar ramas, environments o repos
 
-Edita `github_branches` / `github_org` / `github_repo` en `variables.tf` y vuelve a aplicar.
+Si el workflow usa `environment: main` en GitHub Actions, el claim OIDC es
+`repo:ORG/REPO:environment:main` (incluido en `github_environments` por defecto).
+
+Edita `github_branches`, `github_environments`, `github_org` / `github_repo` y vuelve a aplicar.
 
 ## Nota
 
