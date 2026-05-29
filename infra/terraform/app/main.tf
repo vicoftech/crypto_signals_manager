@@ -329,7 +329,7 @@ locals {
     TRAILING_TP1_TP3_STEP_PCT          = "0.03"
     TP_R_STEP                          = "1.5"
     MAX_TP_LEVEL                       = "6"
-    MAX_CONCURRENT_LIVE_OPEN           = "1"
+    MAX_CONCURRENT_LIVE_OPEN           = "0"
     CLOSED_NOTIFY_MAX_AGE_HOURS        = "72"
     ENTRY_DRIFT_MAX_PCT                = "0.003"
     COOLDOWN_MINUTES                   = "45"

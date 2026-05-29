@@ -295,20 +295,22 @@ class TradesManager:
 
     def can_open_live_trade(self, pair: str) -> tuple[bool, str]:
         """
-        live/live_test: max N posiciones abiertas (default 1) y como mucho una por par.
+        live/live_test: como mucho una posicion abierta por par.
+        Tope global opcional (MAX_CONCURRENT_LIVE_OPEN > 0); si es 0, el limite es el capital.
         """
-        max_n = int(settings.max_concurrent_live_open)
-        opens = self.get_open_live_trades()
-        if len(opens) >= max_n:
-            busy = ", ".join(
-                f"{t.get('pair')}({t.get('trade_id', '')[:8]})" for t in opens[:3]
-            )
-            return (
-                False,
-                f"max_concurrent_live_open={max_n} (abiertas: {busy})",
-            )
         if self.find_open_real_by_pair(pair):
             return False, f"ya_hay_operacion_abierta_en_{pair}"
+        max_n = int(settings.max_concurrent_live_open)
+        if max_n > 0:
+            opens = self.get_open_live_trades()
+            if len(opens) >= max_n:
+                busy = ", ".join(
+                    f"{t.get('pair')}({t.get('trade_id', '')[:8]})" for t in opens[:3]
+                )
+                return (
+                    False,
+                    f"max_concurrent_live_open={max_n} (abiertas: {busy})",
+                )
         return True, ""
 
 

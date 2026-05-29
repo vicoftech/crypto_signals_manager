@@ -22,6 +22,10 @@ class PairConfig:
     sim_auto_enabled_at: str | None = None
     sim_auto_reason: str | None = None
     sim_stats: dict | None = None
+    activated_at: str | None = None
+    activation_reason: str | None = None
+    deactivated_at: str | None = None
+    deactivation_reason: str | None = None
 
 
 class PairsManager:
@@ -52,6 +56,10 @@ class PairsManager:
             sim_auto_enabled_at=i.get("sim_auto_enabled_at"),
             sim_auto_reason=i.get("sim_auto_reason"),
             sim_stats=dict(stats) if stats else None,
+            activated_at=i.get("activated_at"),
+            activation_reason=i.get("activation_reason"),
+            deactivated_at=i.get("deactivated_at"),
+            deactivation_reason=i.get("deactivation_reason"),
         )
 
     def get_all_pairs(self) -> list[PairConfig]:
@@ -64,6 +72,7 @@ class PairsManager:
     def add_pair(self, pair: str) -> None:
         normalized = pair.upper().strip()
         default_strategies = ["EMAPullback", "RangeBreakout", "SupportBounce", "MACDCross", "ORB", "Momentum"]
+        now = datetime.now(timezone.utc).isoformat()
         item = {
             "pair": normalized,
             "active": True,
@@ -73,6 +82,8 @@ class PairsManager:
             "auto_trade": False,
             "auto_trade_strategies": [],
             "sim_stats": default_sim_stats(),
+            "activated_at": now,
+            "activation_reason": "Par agregado",
         }
         if self.table_name:
             table = boto3.resource("dynamodb").Table(self.table_name)
@@ -80,22 +91,56 @@ class PairsManager:
             return
         self._pairs.append(self._item_to_config(item))
 
-    def set_active(self, pair: str, active: bool) -> bool:
+    def set_active(self, pair: str, active: bool, reason: str = "") -> bool:
+        """Compat: delega en set_pair_active con razon generica si falta."""
+        default_reason = "Activado manualmente" if active else "Pausado manualmente"
+        return self.set_pair_active(pair, active, reason or default_reason)
+
+    def set_pair_active(self, pair: str, active: bool, reason: str) -> bool:
         normalized = pair.upper().strip()
+        now = datetime.now(timezone.utc).isoformat()
+        reason_s = (reason or "").strip()[:500]
+
         if self.table_name:
             table = boto3.resource("dynamodb").Table(self.table_name)
             existing = table.get_item(Key={"pair": normalized}).get("Item")
             if not existing:
                 return False
+            expr = ["active = :a"]
+            vals: dict = {":a": active}
+            if active:
+                expr.extend(
+                    [
+                        "activated_at = :t",
+                        "activation_reason = :r",
+                    ]
+                )
+                vals[":t"] = now
+                vals[":r"] = reason_s or "Activado"
+            else:
+                expr.extend(
+                    [
+                        "deactivated_at = :t",
+                        "deactivation_reason = :r",
+                    ]
+                )
+                vals[":t"] = now
+                vals[":r"] = reason_s or "Desactivado"
             table.update_item(
                 Key={"pair": normalized},
-                UpdateExpression="SET active = :a",
-                ExpressionAttributeValues={":a": active},
+                UpdateExpression="SET " + ", ".join(expr),
+                ExpressionAttributeValues=vals,
             )
             return True
         for p in self._pairs:
             if p.pair == normalized:
                 p.active = active
+                if active:
+                    p.activated_at = now
+                    p.activation_reason = reason_s
+                else:
+                    p.deactivated_at = now
+                    p.deactivation_reason = reason_s
                 return True
         return False
 

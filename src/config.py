@@ -29,7 +29,8 @@ class Settings:
     trailing_tp1_tp3_step_pct: float = float(os.getenv("TRAILING_TP1_TP3_STEP_PCT", "0.03"))
     tp_r_step: float = float(os.getenv("TP_R_STEP", "1.5"))
     max_tp_level: int = int(os.getenv("MAX_TP_LEVEL", "6"))
-    max_concurrent_live_open: int = max(1, int(os.getenv("MAX_CONCURRENT_LIVE_OPEN", "1")))
+    # 0 = sin tope global (solo una op por par + capital disponible). >0 = max ops live en total.
+    max_concurrent_live_open: int = max(0, int(os.getenv("MAX_CONCURRENT_LIVE_OPEN", "0")))
     entry_drift_max_pct: float = float(os.getenv("ENTRY_DRIFT_MAX_PCT", "0.003"))
     cooldown_minutes: int = int(os.getenv("COOLDOWN_MINUTES", "45"))
     ema_pullback_min_volume_ratio: float = float(os.getenv("EMA_PULLBACK_MIN_VOLUME_RATIO", "1.05"))

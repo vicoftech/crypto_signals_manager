@@ -18,8 +18,8 @@ COMMANDS_HELP = {
     "/reanudar": "Reanuda el scanner.",
     "/pares": "Lista todos los pares configurados.",
     "/agregar <PAR>": "Agrega un nuevo par (ej: SOLUSDT).",
-    "/pausarpar <PAR>": "Pausa un par puntual.",
-    "/activarpar <PAR>": "Reactiva un par puntual.",
+    "/pausarpar <PAR> [motivo]": "Pausa un par y registra motivo/fecha.",
+    "/activarpar <PAR> [motivo]": "Reactiva un par y registra motivo/fecha.",
     "/estrategias [PAR]": "Sin PAR muestra ayuda; con PAR muestra estrategias habilitadas.",
     "/simular": "Posiciones SIM abiertas con P&L circunstancial.",
     "/simconfig <PAR> <manual|auto|disabled>": "Modo de simulacion por par.",
@@ -250,16 +250,30 @@ def _handle_command(
         all_pairs = pairs.get_all_pairs()
         if not all_pairs:
             return "No hay pares configurados"
-        lines = [f"{p.pair} | {'activo' if p.active else 'pausado'} | estrategias={len(p.strategies)}" for p in all_pairs]
+        lines = []
+        for p in all_pairs:
+            st = "activo" if p.active else "pausado"
+            extra = ""
+            if p.active and p.activated_at:
+                extra = f" | act {str(p.activated_at)[:16]}"
+                if p.activation_reason:
+                    extra += f" ({str(p.activation_reason)[:40]})"
+            elif not p.active and p.deactivated_at:
+                extra = f" | off {str(p.deactivated_at)[:16]}"
+                if p.deactivation_reason:
+                    extra += f" ({str(p.deactivation_reason)[:40]})"
+            lines.append(f"{p.pair} | {st} | estrategias={len(p.strategies)}{extra}")
         return "Pares configurados\n" + "\n".join(lines)
     if cmd == "/agregar" and len(parts) >= 2:
         pairs.add_pair(parts[1])
         return f"Par agregado: {parts[1].upper()}"
     if cmd == "/pausarpar" and len(parts) >= 2:
-        ok = pairs.set_active(parts[1], False)
+        reason = " ".join(parts[2:]).strip() or "Comando /pausarpar"
+        ok = pairs.set_pair_active(parts[1], False, reason)
         return f"Par pausado: {parts[1].upper()}" if ok else "Par no encontrado"
     if cmd == "/activarpar" and len(parts) >= 2:
-        ok = pairs.set_active(parts[1], True)
+        reason = " ".join(parts[2:]).strip() or "Comando /activarpar"
+        ok = pairs.set_pair_active(parts[1], True, reason)
         return f"Par activado: {parts[1].upper()}" if ok else "Par no encontrado"
     if cmd == "/estrategias":
         if len(parts) >= 2:
