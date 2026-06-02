@@ -142,6 +142,21 @@ def _pending_close_notifications(max_age_hours: float) -> list[dict]:
     return out
 
 
+def _minutes_since_iso(iso_ts: str | None) -> float:
+    if not iso_ts:
+        return 0.0
+    try:
+        v = str(iso_ts)
+        if v.endswith("Z"):
+            v = v.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(v)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 60.0)
+    except Exception:
+        return 0.0
+
+
 def handler(event, context):
     trades.reset_trade_list_cache()
 
@@ -211,19 +226,40 @@ def handler(event, context):
                 )
             trade = trades.get_trade(tid) or trade
         if not close_reason:
+            if trade.get("close_signal_at"):
+                trades.update_trade(tid, {"close_signal_at": ""})
             continue
 
+        signal_at = str(trade.get("close_signal_at") or "")
+        if not signal_at:
+            signal_at = datetime.now(timezone.utc).isoformat()
+            trades.update_trade(tid, {"close_signal_at": signal_at})
+            trade = trades.get_trade(tid) or trade
+        signal_age_min = _minutes_since_iso(signal_at)
+        protection_grace_min = float(os.getenv("LIVE_EXIT_PROTECTION_GRACE_MINUTES", "10"))
+
         # Salida por SL / piso escalera: la orden en Binance define el fill (~risk_usd).
-        # No vender MARKET si ya hay OCO/STOP (evita -5 USD cuando risk_usd era ~0.5).
+        # No vender MARKET inmediatamente si hay OCO/STOP; pero tampoco deferir para siempre
+        # cuando los IDs de proteccion estan stale.
         if close_reason == "SL" or close_reason.startswith("SL_TP"):
             if has_exchange_exit_protection(trade):
-                logger.info(
-                    "live exit defer exchange trade_id=%s pair=%s reason=%s",
+                if signal_age_min < protection_grace_min:
+                    logger.info(
+                        "live exit defer exchange trade_id=%s pair=%s reason=%s age=%.1fm",
+                        tid,
+                        pair,
+                        close_reason,
+                        signal_age_min,
+                    )
+                    continue
+                logger.warning(
+                    "live exit stale protection trade_id=%s pair=%s reason=%s age=%.1fm; "
+                    "fallback MARKET",
                     tid,
                     pair,
                     close_reason,
+                    signal_age_min,
                 )
-                continue
             floor_px = float(
                 trade.get("active_stop_price")
                 if close_reason.startswith("SL_TP")
@@ -247,11 +283,10 @@ def handler(event, context):
                     )
                     continue
                 logger.warning(
-                    "live exit STOP failed trade_id=%s: %s; no MARKET fallback for SL",
+                    "live exit STOP failed trade_id=%s: %s; fallback MARKET",
                     tid,
                     err_stop,
                 )
-                continue
 
         exit_px = float(price)
         if close_reason.startswith("SL_TP") or close_reason == "TRAILING_SL":
