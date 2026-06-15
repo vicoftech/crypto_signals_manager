@@ -333,6 +333,7 @@ locals {
     CLOSED_NOTIFY_MAX_AGE_HOURS        = "72"
     ENTRY_DRIFT_MAX_PCT                = "0.003"
     COOLDOWN_MINUTES                   = "45"
+    LIVE_EXIT_PROTECTION_GRACE_MINUTES = "5"
     TELEGRAM_BOT_TOKEN                 = var.telegram_bot_token
     TELEGRAM_CHAT_ID                   = var.telegram_chat_id
     BINANCE_SECRET_NAME_TEST           = var.binance_secret_name_test
