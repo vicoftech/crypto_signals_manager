@@ -157,6 +157,13 @@ def _minutes_since_iso(iso_ts: str | None) -> float:
         return 0.0
 
 
+def _should_notify_exit_fail(last_notify_at: str | None, cooldown_min: float) -> bool:
+    """Evita spam Telegram: un aviso por trade cada cooldown_min minutos."""
+    if not last_notify_at:
+        return True
+    return _minutes_since_iso(last_notify_at) >= cooldown_min
+
+
 def handler(event, context):
     trades.reset_trade_list_cache()
 
@@ -301,12 +308,62 @@ def handler(event, context):
             trades, binance, trade, close_reason, fallback_price=float(price)
         )
         if not ok:
-            logger.error("live exit MARKET SELL failed trade_id=%s: %s", tid, err)
-            telegram.send_trade_update(
-                f"⚠️ Cierre automatico fallo (VENTA)\n{pair} trade_id={tid}\n"
-                f"{err}\n"
-                "Revisa balance BASE y LOT_SIZE; se reintentara en el proximo ciclo."
+            fail_count = int(trade.get("exit_fail_count") or 0) + 1
+            now_iso = datetime.now(timezone.utc).isoformat()
+            trades.update_trade(
+                tid,
+                {
+                    "exit_fail_count": fail_count,
+                    "exit_fail_last_at": now_iso,
+                    "exit_fail_last_error": str(err)[:500],
+                },
             )
+            logger.error(
+                "live exit MARKET SELL failed trade_id=%s count=%s: %s",
+                tid,
+                fail_count,
+                err,
+            )
+
+            notify_cooldown_min = float(os.getenv("EXIT_FAIL_NOTIFY_COOLDOWN_MINUTES", "60"))
+            max_fails = int(os.getenv("EXIT_FAIL_MAX_RETRIES", "12"))
+            last_notify = str(trade.get("exit_fail_notify_at") or "")
+            should_notify = _should_notify_exit_fail(last_notify, notify_cooldown_min)
+
+            # Tras muchos fallos (tipico: sin BASE en testnet), cierra solo en Dynamo
+            # para dejar de reintentar cada ciclo del monitor.
+            if fail_count >= max_fails:
+                trades.close_trade(tid, "MANUAL", float(price))
+                trades.update_trade(
+                    tid,
+                    {
+                        "close_reason_text": (
+                            f"Cierre forzoso tras {fail_count} fallos de VENTA MARKET: {err}"
+                        )[:500],
+                        "exit_fail_notify_at": now_iso,
+                    },
+                )
+                telegram.send_trade_update(
+                    f"🛑 Cierre forzoso (sin venta en exchange)\n"
+                    f"{pair} trade_id={tid}\n"
+                    f"Fallos VENTA: {fail_count}\n"
+                    f"Ultimo error: {str(err)[:180]}\n"
+                    "Trade cerrado en Dynamo; revisa balance BASE en Binance."
+                )
+                continue
+
+            if should_notify:
+                trades.update_trade(tid, {"exit_fail_notify_at": now_iso})
+                next_in = int(notify_cooldown_min)
+                remaining = max(0, max_fails - fail_count)
+                telegram.send_trade_update(
+                    f"⚠️ Cierre automatico fallo (VENTA)\n{pair} trade_id={tid}\n"
+                    f"Intento {fail_count}/{max_fails}\n"
+                    f"{err}\n"
+                    f"Revisa balance BASE y LOT_SIZE. "
+                    f"No avisare de nuevo en ~{next_in} min "
+                    f"(cierre forzoso en ~{remaining} reintentos)."
+                )
             continue
 
         closed = trades.get_trade(tid) or {}
