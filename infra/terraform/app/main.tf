@@ -265,7 +265,7 @@ resource "aws_dynamodb_table_item" "cfg_risk" {
   hash_key   = aws_dynamodb_table.config.hash_key
   item = jsonencode({
     key   = { S = "risk_pct" }
-    value = { N = "0.005" }
+    value = { N = "0.05" }
   })
   lifecycle {
     ignore_changes = [item]
@@ -319,23 +319,31 @@ locals {
   }
 
   lambda_env = {
-    CAPITAL_TOTAL                      = "1183.0"
+    CAPITAL_TOTAL                      = "1100.0"
     BINANCE_HTTP_TIMEOUT               = "2.5"
-    RISK_PER_TRADE_PCT                 = "0.005"
+    RISK_PER_TRADE_PCT                 = "0.05"
     MIN_RR_RATIO                       = "2.5"
-    MAX_SL_PCT                         = "0.02"
+    MAX_SL_PCT                         = "0.01"
+    FIXED_SL_PCT                       = "0.01"
+    SIZING_USE_CONFIG_CAPITAL          = "false"
     TRAILING_ACTIVATION                = "1.0"
     TRAILING_STEP_PCT                  = "0.005"
     TRAILING_TP1_TP3_STEP_PCT          = "0.03"
-    TP_R_STEP                          = "1.5"
+    TP_R_STEP                          = "1.0"
     MAX_TP_LEVEL                       = "6"
     MAX_CONCURRENT_LIVE_OPEN           = "0"
     CLOSED_NOTIFY_MAX_AGE_HOURS        = "72"
     ENTRY_DRIFT_MAX_PCT                = "0.003"
-    COOLDOWN_MINUTES                   = "45"
+    COOLDOWN_MINUTES                   = "90"
     LIVE_EXIT_PROTECTION_GRACE_MINUTES = "5"
     EXIT_FAIL_NOTIFY_COOLDOWN_MINUTES  = "60"
     EXIT_FAIL_MAX_RETRIES              = "2"
+    BE_ENABLED                         = "true"
+    BE_R_THRESHOLD                     = "0.7"
+    BE_FEE_BUFFER_PCT                  = "0.0005"
+    TIME_STOP_ENABLED                  = "true"
+    TIME_STOP_HOURS                    = "5"
+    TIME_STOP_MIN_R                    = "0.3"
     TELEGRAM_BOT_TOKEN                 = var.telegram_bot_token
     TELEGRAM_CHAT_ID                   = var.telegram_chat_id
     BINANCE_SECRET_NAME_TEST           = var.binance_secret_name_test

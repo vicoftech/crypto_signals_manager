@@ -8,6 +8,7 @@ import logging
 import pandas as pd
 
 from src.core.market_context import MarketContext
+from src.core.tp_ladder import tp_price_for_level
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +74,9 @@ def simple_long_opportunity(
         direction="LONG",
         entry_price=entry,
         sl_price=sl,
-        tp1_price=entry + (risk * 1.5),
-        tp2_price=entry + (risk * 3.0),
-        tp3_price=entry + (risk * 4.5),
+        tp1_price=tp_price_for_level(entry, sl, 1),
+        tp2_price=tp_price_for_level(entry, sl, 2),
+        tp3_price=tp_price_for_level(entry, sl, 3),
         sl_type=sl_type,
         market_context=ctx,
     )

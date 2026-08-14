@@ -198,7 +198,7 @@ def handler(event, context):
         if close_reason:
             exit_px = float(price)
             pair = str(trade.get("pair", ""))
-            if close_reason.startswith("SL_TP") or close_reason == "TRAILING_SL":
+            if close_reason.startswith("SL_TP") or close_reason in ("TRAILING_SL", "BE"):
                 if trade.get("active_stop_price") is not None:
                     exit_px = apply_trailing_close_slippage(
                         float(trade["active_stop_price"]),
@@ -212,6 +212,7 @@ def handler(event, context):
             elif close_reason == "SL":
                 sl_level = float(trade.get("sl_price", price) or price)
                 exit_px = apply_sl_close_slippage(sl_level, pair)
+            # TIME_STOP: sale al precio de mercado (price)
             trades.close_trade(tid, close_reason, exit_px)
             closed = trades.get_trade(tid) or {}
             _emit_closed_notifications(closed, trade, exit_px, close_reason)
@@ -227,6 +228,7 @@ def handler(event, context):
             trade = trades.get_trade(tid) or trade
 
         prev_level = int(trade.get("ladder_level") or 0)
+        prev_be = bool(trade.get("breakeven_armed"))
         close_reason, updates = evaluate_sim_trade(trade, price)
         if close_reason == "INVALID_TRADE_DATA":
             continue
@@ -234,6 +236,22 @@ def handler(event, context):
             trades.update_trade(tid, updates)
             trade = trades.get_trade(tid) or trade
         new_level = int(trade.get("ladder_level") or 0)
+        newly_be = bool(trade.get("breakeven_armed")) and not prev_be
+        if newly_be and new_level <= 0:
+            stop_px = float(trade.get("active_stop_price") or 0)
+            ok_sync, err_sync = sync_ladder_stop_on_exchange(
+                binance, trades, trade, 0, stop_px
+            )
+            if ok_sync:
+                telegram.send_trade_update(
+                    f"🔒 BE armado ({pair})\n"
+                    f"Stop en exchange ~ {stop_px:.4f} (entrada protegida)."
+                )
+            else:
+                logger.warning(
+                    "BE sync stop failed trade_id=%s: %s", tid, err_sync
+                )
+            trade = trades.get_trade(tid) or trade
         if new_level > prev_level:
             stop_px = float(trade.get("active_stop_price") or 0)
             ok_sync, err_sync = sync_ladder_stop_on_exchange(
@@ -264,10 +282,14 @@ def handler(event, context):
         signal_age_min = _minutes_since_iso(signal_at)
         protection_grace_min = float(os.getenv("LIVE_EXIT_PROTECTION_GRACE_MINUTES", "10"))
 
-        # Salida por SL / piso escalera: la orden en Binance define el fill (~risk_usd).
-        # No vender MARKET inmediatamente si hay OCO/STOP; pero tampoco deferir para siempre
-        # cuando los IDs de proteccion estan stale.
-        if close_reason == "SL" or close_reason.startswith("SL_TP"):
+        # Salida por SL / BE / piso escalera: la orden en Binance define el fill (~risk_usd).
+        # TIME_STOP sale por MARKET (no espera STOP en exchange).
+        protected_exit = (
+            close_reason == "SL"
+            or close_reason == "BE"
+            or close_reason.startswith("SL_TP")
+        )
+        if protected_exit:
             if has_exchange_exit_protection(trade):
                 if signal_age_min < protection_grace_min:
                     logger.info(
@@ -288,7 +310,7 @@ def handler(event, context):
                 )
             floor_px = float(
                 trade.get("active_stop_price")
-                if close_reason.startswith("SL_TP")
+                if (close_reason.startswith("SL_TP") or close_reason == "BE")
                 else trade.get("sl_price")
                 or price
             )
@@ -315,13 +337,14 @@ def handler(event, context):
                 )
 
         exit_px = float(price)
-        if close_reason.startswith("SL_TP") or close_reason == "TRAILING_SL":
+        if close_reason.startswith("SL_TP") or close_reason in ("TRAILING_SL", "BE"):
             floor_px = float(
                 trade.get("active_stop_price") or trade.get("trailing_sl_final") or price
             )
             exit_px = apply_trailing_close_slippage(floor_px, pair)
         elif close_reason == "SL":
             exit_px = apply_sl_close_slippage(float(trade.get("sl_price", price) or price), pair)
+        # TIME_STOP: exit_px = market price
 
         ok, err = close_live_trade_with_market_sell(
             trades, binance, trade, close_reason, fallback_price=float(price)

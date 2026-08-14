@@ -402,13 +402,17 @@ def test_emapullback_señal_valida():
     ema21 = df["EMA_21"]
     df.loc[df.index[-2], "low"] = float(ema21.iloc[-2]) * 0.9995
     df.loc[df.index[-1], "open"] = float(ema21.iloc[-1]) * 0.998
-    df.loc[df.index[-1], "close"] = float(ema21.iloc[-1]) * 1.02
-    df.loc[df.index[-1], "high"] = float(df.loc[df.index[-1], "close"]) + 0.5
-    df.loc[df.index[-1], "low"] = float(ema21.iloc[-1]) * 0.99
+    # Extension acotada (< ema_pullback_max_extension_pct) y cuerpo/rango fuerte.
+    df.loc[df.index[-1], "close"] = float(ema21.iloc[-1]) * 1.004
+    df.loc[df.index[-1], "high"] = float(df.loc[df.index[-1], "close"]) + 0.05
+    df.loc[df.index[-1], "low"] = float(ema21.iloc[-1]) * 0.999
+    # Volumen por encima del promedio rolling para pasar filtro.
+    df.loc[df.index[-1], "volume"] = 2000.0
     opp = EMAPullbackStrategy().analyze(df, "BTCUSDT", _ctx_ok())
     assert opp is not None
     assert opp.strategy == "EMAPullback"
     assert opp.sl_price == float(df["low"].tail(3).min())
+    assert opp.tp1_price > opp.entry_price
 
 
 # --- MACD ---
