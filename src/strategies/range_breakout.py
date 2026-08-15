@@ -26,7 +26,8 @@ class RangeBreakoutStrategy(BaseStrategy):
 
         vol_actual = float(df["volume"].iloc[-1])
         vol_avg_20 = float(df["volume"].rolling(20).mean().iloc[-1])
-        if vol_actual < vol_avg_20 * 1.3:
+        # Cohorte60: volumen mas exigente (antes 1.3x) para menos falsos breakouts.
+        if vol_actual < vol_avg_20 * 1.5:
             return None
 
         vela = df.iloc[-1]

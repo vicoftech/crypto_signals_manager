@@ -52,17 +52,21 @@ def test_btc_filter_does_not_crash_for_altcoins(mock_btc_ctx):
 
 
 @patch("src.core.market_context.get_btc_context")
-def test_btc_filter_works_for_sideways_context(mock_btc_ctx):
+def test_btc_sideways_blocks_bullish_alt_when_required(mock_btc_ctx):
     mock_btc_ctx.return_value = BtcContext(
         trend="SIDEWAYS",
-        volatility="LOW",
+        volatility="MEDIUM",
         ema21=1.0,
         ema50=1.0,
         close=1.0,
         atr_ratio=1.0,
         evaluated_at="",
     )
-    df = _dummy_df(trend="SIDEWAYS")
-    ctx = MarketContextEvaluator.evaluate(df, "SOLUSDT", scan_id="test", pair_config={"tier": "1"})
-    assert isinstance(ctx, object)
+    # Par individual BULLISH + volumen/ATR ok → antes se permitia; cohorte60 lo bloquea.
+    df = _dummy_df(trend="BULLISH")
+    df["volume"] = 2000.0
+    df["ATRr_14"] = 0.008
+    ctx = MarketContextEvaluator.evaluate(df, "ETHUSDT", scan_id="test", pair_config={"tier": "1"})
+    assert ctx.tradeable is False
+    assert "SIDEWAYS" in ctx.reason
 

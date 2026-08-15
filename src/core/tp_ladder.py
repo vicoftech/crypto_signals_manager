@@ -59,7 +59,9 @@ def _parse_iso(ts: str | None) -> datetime | None:
 
 def should_time_stop(trade: dict, now: datetime | None = None) -> bool:
     """
-    True si el trade lleva TIME_STOP_HOURS sin progreso minimo hacia TP1.
+    True si el trade esta estancado sin llegar a BE/TP1:
+    - early: age >= TIME_STOP_EARLY_HOURS y MFE < TIME_STOP_EARLY_MIN_R
+    - pleno: age >= TIME_STOP_HOURS y MFE < TIME_STOP_MIN_R
     Solo aplica con ladder_level==0 y sin BE armado.
     """
     if not settings.time_stop_enabled:
@@ -77,11 +79,14 @@ def should_time_stop(trade: dict, now: datetime | None = None) -> bool:
         return False
     now_dt = now or datetime.now(timezone.utc)
     age_hours = max(0.0, (now_dt - started).total_seconds() / 3600.0)
-    if age_hours < float(settings.time_stop_hours):
-        return False
     mfe = float(trade.get("max_favorable_excursion") or entry or 0)
     progress_r = max(0.0, (mfe - entry) / r)
-    return progress_r < float(settings.time_stop_min_r)
+    early_h = float(settings.time_stop_early_hours)
+    if early_h > 0 and age_hours >= early_h and progress_r < float(settings.time_stop_early_min_r):
+        return True
+    if age_hours >= float(settings.time_stop_hours) and progress_r < float(settings.time_stop_min_r):
+        return True
+    return False
 
 
 def evaluate_ladder_trade(trade: dict, current_price: float) -> tuple[str | None, dict]:

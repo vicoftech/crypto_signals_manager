@@ -49,8 +49,15 @@ class Settings:
         "true",
         "yes",
     )
-    time_stop_hours: float = float(os.getenv("TIME_STOP_HOURS", "5"))
+    time_stop_hours: float = float(os.getenv("TIME_STOP_HOURS", "3"))
     time_stop_min_r: float = float(os.getenv("TIME_STOP_MIN_R", "0.3"))
+    # Corte temprano: si tras N horas el MFE sigue bajo, salir (antes del TIME_STOP pleno).
+    time_stop_early_hours: float = float(os.getenv("TIME_STOP_EARLY_HOURS", "2"))
+    time_stop_early_min_r: float = float(os.getenv("TIME_STOP_EARLY_MIN_R", "0.15"))
+    # Si true, altcoins no abren con BTC SIDEWAYS (solo BULLISH).
+    btc_require_bullish_for_alts: bool = os.getenv(
+        "BTC_REQUIRE_BULLISH_FOR_ALTS", "true"
+    ).strip().lower() in ("1", "true", "yes")
     ema_pullback_min_volume_ratio: float = float(os.getenv("EMA_PULLBACK_MIN_VOLUME_RATIO", "1.05"))
     ema_pullback_max_extension_pct: float = float(os.getenv("EMA_PULLBACK_MAX_EXTENSION_PCT", "0.006"))
     ema_pullback_min_close_in_range: float = float(os.getenv("EMA_PULLBACK_MIN_CLOSE_IN_RANGE", "0.60"))

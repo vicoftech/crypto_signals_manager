@@ -100,6 +100,26 @@ def test_time_stop_triggers():
     assert reason == "TIME_STOP"
 
 
+def test_time_stop_early_at_2h():
+    old = (datetime.now(timezone.utc) - timedelta(hours=2, minutes=5)).isoformat()
+    trade = {
+        **_base_trade(),
+        "started_at": old,
+        "max_favorable_excursion": 100.1,  # 0.1R < early 0.15
+    }
+    assert should_time_stop(trade) is True
+
+
+def test_time_stop_early_skipped_if_mild_progress():
+    old = (datetime.now(timezone.utc) - timedelta(hours=2, minutes=5)).isoformat()
+    trade = {
+        **_base_trade(),
+        "started_at": old,
+        "max_favorable_excursion": 100.2,  # 0.2R >= 0.15 early, < 0.3 pleno
+    }
+    assert should_time_stop(trade) is False
+
+
 def test_time_stop_skipped_if_progress():
     old = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
     trade = {

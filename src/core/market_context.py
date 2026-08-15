@@ -206,14 +206,18 @@ class MarketContextEvaluator:
                 if btc_ctx.trend == "BEARISH":
                     tradeable_final = False
                     reason = "BTC BEARISH — altcoins en riesgo de correlacion"
-                elif btc_ctx.trend == "SIDEWAYS" and trend == "SIDEWAYS":
-                    tradeable_final = False
-                    reason = "BTC SIDEWAYS + SIDEWAYS — doble lateral, no operar"
-                elif btc_ctx.trend == "SIDEWAYS" and trend == "BULLISH":
-                    logger.info(
-                        "[CTX] %s BULLISH con BTC SIDEWAYS — oportunidad permitida con mayor cautela",
-                        pair,
-                    )
+                elif btc_ctx.trend == "SIDEWAYS":
+                    if settings.btc_require_bullish_for_alts:
+                        tradeable_final = False
+                        reason = "BTC SIDEWAYS — alt longs pausados (requiere BTC BULLISH)"
+                    elif trend == "SIDEWAYS":
+                        tradeable_final = False
+                        reason = "BTC SIDEWAYS + SIDEWAYS — doble lateral, no operar"
+                    elif trend == "BULLISH":
+                        logger.info(
+                            "[CTX] %s BULLISH con BTC SIDEWAYS — oportunidad permitida con mayor cautela",
+                            pair,
+                        )
 
             ctx = MarketContext(
                 pair=pair,

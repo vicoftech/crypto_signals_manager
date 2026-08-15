@@ -342,8 +342,11 @@ locals {
     BE_R_THRESHOLD                     = "0.7"
     BE_FEE_BUFFER_PCT                  = "0.0005"
     TIME_STOP_ENABLED                  = "true"
-    TIME_STOP_HOURS                    = "5"
+    TIME_STOP_HOURS                    = "3"
     TIME_STOP_MIN_R                    = "0.3"
+    TIME_STOP_EARLY_HOURS              = "2"
+    TIME_STOP_EARLY_MIN_R              = "0.15"
+    BTC_REQUIRE_BULLISH_FOR_ALTS       = "true"
     TELEGRAM_BOT_TOKEN                 = var.telegram_bot_token
     TELEGRAM_CHAT_ID                   = var.telegram_chat_id
     BINANCE_SECRET_NAME_TEST           = var.binance_secret_name_test
