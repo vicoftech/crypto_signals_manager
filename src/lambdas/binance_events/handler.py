@@ -42,12 +42,44 @@ def handler(event, context):
                     exit_price = float(t.get("entry_price", 0) or 0)
                 trades.close_trade(tid, "SL", exit_price)
                 return {"ok": True, "closed_trade_id": tid, "via": "oco_sl"}
+            prot_oid = str(t.get("protection_order_id", "") or t.get("binance_stop_order_id", ""))
+            if prot_oid and prot_oid == order_id:
+                if exit_price <= 0:
+                    exit_price = float(t.get("active_stop_price", 0) or 0)
+                lvl = int(t.get("ladder_level") or 0)
+                be = bool(t.get("breakeven_armed"))
+                if lvl <= 0 and be:
+                    reason = "BE"
+                elif lvl <= 0:
+                    reason = "SL"
+                else:
+                    reason = f"SL_TP{lvl}"
+                trades.close_trade(tid, reason, exit_price)
+                return {"ok": True, "closed_trade_id": tid, "via": "protection_stop"}
             if str(t.get("binance_stop_order_id", "")) == order_id:
                 if exit_price <= 0:
                     exit_price = float(t.get("active_stop_price", 0) or 0)
                 lvl = int(t.get("ladder_level") or 1)
                 trades.close_trade(tid, f"SL_TP{lvl}", exit_price)
                 return {"ok": True, "closed_trade_id": tid, "via": "ladder_stop"}
+            if client_oid:
+                from src.core.exchange_protection import protection_client_order_id, infer_protection_level
+
+                tid_s = str(t.get("trade_id", ""))
+                level = infer_protection_level(t)
+                if client_oid == protection_client_order_id(tid_s, level):
+                    if exit_price <= 0:
+                        exit_price = float(t.get("active_stop_price", 0) or 0)
+                    lvl = int(t.get("ladder_level") or 0)
+                    be = bool(t.get("breakeven_armed"))
+                    if lvl <= 0 and be:
+                        reason = "BE"
+                    elif lvl <= 0:
+                        reason = "SL"
+                    else:
+                        reason = f"SL_TP{lvl}"
+                    trades.close_trade(tid, reason, exit_price)
+                    return {"ok": True, "closed_trade_id": tid, "via": "protection_client_id"}
 
         matched = None
         for t in trades.list_open():

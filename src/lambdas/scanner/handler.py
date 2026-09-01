@@ -8,6 +8,7 @@ import uuid
 from src.config import settings
 from src.core.binance_client import BinanceClient
 from src.core.live_exit import attach_oco_protections
+from src.core.exchange_protection import get_protection_manager
 from src.core.tp_ladder import ladder_payload_defaults
 from src.core.calculator import InsufficientCapitalError, with_risk
 from src.core.config_store import ConfigStore
@@ -97,6 +98,15 @@ def _open_real_trade_from_opportunity(op_data: dict) -> str:
     )
     if ok_oco:
         logger.info("OCO colocado trade_id=%s", tid)
+        row = trades.get_trade(tid) or {}
+        verify = get_protection_manager().verify_oco_after_attach(binance, trades, row)
+        if verify.ok:
+            logger.info("OCO SL verificado trade_id=%s order=%s", tid, verify.order_id)
+        else:
+            telegram.send_trade_update(
+                f"⚠️ OCO colocado pero SL no verificado ({pair_s}). "
+                f"Monitor reintentara. {verify.error[:100]}"
+            )
     else:
         logger.exception("OCO fallo para %s trade_id=%s: %s", pair_s, tid, err_oco)
         telegram.send_trade_update(

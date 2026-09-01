@@ -6,11 +6,13 @@ from datetime import datetime, timedelta, timezone
 
 from src.core.auto_sim_utils import apply_sl_close_slippage, apply_trailing_close_slippage
 from src.core.binance_client import BinanceClient
-from src.core.live_exit import (
-    close_live_trade_with_market_sell,
-    has_exchange_exit_protection,
-    sync_ladder_stop_on_exchange,
+from src.core.exchange_protection import (
+    exchange_protection_strict,
+    get_protection_manager,
+    infer_protection_level,
+    protection_max_retries,
 )
+from src.core.live_exit import close_live_trade_with_market_sell, has_exchange_exit_protection
 from src.core.config_store import ConfigStore
 from src.core.mode import MODE_SIMULATION, normalize_mode
 from src.core.pairs_manager import PairsManager
@@ -217,6 +219,9 @@ def handler(event, context):
             closed = trades.get_trade(tid) or {}
             _emit_closed_notifications(closed, trade, exit_px, close_reason)
 
+    protection_mgr = get_protection_manager()
+    strict_protection = exchange_protection_strict()
+
     for trade in trades.get_open_live_trades():
         tid = trade["trade_id"]
         pair = str(trade["pair"])
@@ -237,38 +242,53 @@ def handler(event, context):
             trade = trades.get_trade(tid) or trade
         new_level = int(trade.get("ladder_level") or 0)
         newly_be = bool(trade.get("breakeven_armed")) and not prev_be
+
+        parity_ok, parity_err = protection_mgr.check_parity(binance, trade)
+        if not protection_mgr.is_synced(trade) or not parity_ok:
+            rec = protection_mgr.reconcile_protection(binance, trades, trade)
+            trade = trades.get_trade(tid) or trade
+            if rec.ok:
+                level = infer_protection_level(trade)
+                stop_px = float(trade.get("active_stop_price") or 0)
+                if rec.recovered:
+                    telegram.send_protection_recovered(
+                        pair, level, stop_px, int(trade.get("protection_retry_count") or 0)
+                    )
+            else:
+                protection_mgr.maybe_alert_broken_parity(
+                    telegram, trade, rec.error, minutes_since_iso=_minutes_since_iso
+                )
+                if int(trade.get("protection_retry_count") or 0) >= protection_max_retries():
+                    protection_mgr.maybe_alert_critical(
+                        telegram, trade, rec.error, minutes_since_iso=_minutes_since_iso
+                    )
+                    trades.update_trade(
+                        tid, {"protection_alert_sent_at": datetime.now(timezone.utc).isoformat()}
+                    )
+
         if newly_be and new_level <= 0:
             stop_px = float(trade.get("active_stop_price") or 0)
-            ok_sync, err_sync = sync_ladder_stop_on_exchange(
-                binance, trades, trade, 0, stop_px
-            )
-            if ok_sync:
-                telegram.send_trade_update(
-                    f"🔒 BE armado ({pair})\n"
-                    f"Stop en exchange ~ {stop_px:.4f} (entrada protegida)."
-                )
-            else:
-                logger.warning(
-                    "BE sync stop failed trade_id=%s: %s", tid, err_sync
-                )
+            rec = protection_mgr.reconcile_protection(binance, trades, trade)
             trade = trades.get_trade(tid) or trade
+            if rec.ok:
+                telegram.send_protection_synced(pair, "BE", stop_px, rec.order_id)
+            else:
+                logger.warning("BE protection failed trade_id=%s: %s", tid, rec.error)
+
         if new_level > prev_level:
             stop_px = float(trade.get("active_stop_price") or 0)
-            ok_sync, err_sync = sync_ladder_stop_on_exchange(
-                binance, trades, trade, new_level, stop_px
-            )
-            if ok_sync:
-                telegram.send_trade_update(
-                    f"📍 Escalera TP{new_level} ({pair})\n"
-                    f"SL en exchange ~ {stop_px:.4f}. Objetivo siguiente TP.\n"
-                    "Salida unica al retroceder al piso."
+            rec = protection_mgr.reconcile_protection(binance, trades, trade)
+            trade = trades.get_trade(tid) or trade
+            if rec.ok:
+                telegram.send_protection_synced(
+                    pair, f"TP{new_level}", stop_px, rec.order_id
                 )
             else:
                 telegram.send_trade_update(
-                    f"⚠️ TP{new_level} en {pair} pero stop en exchange fallo: {err_sync[:100]}\n"
-                    "Monitor cerrara por precio si retrocede."
+                    f"⚠️ TP{new_level} en {pair} — STOP no verificado: {rec.error[:100]}\n"
+                    "Strict: no MARKET en retroceso de escalera."
                 )
-            trade = trades.get_trade(tid) or trade
+
         if not close_reason:
             if trade.get("close_signal_at"):
                 trades.update_trade(tid, {"close_signal_at": ""})
@@ -280,16 +300,36 @@ def handler(event, context):
             trades.update_trade(tid, {"close_signal_at": signal_at})
             trade = trades.get_trade(tid) or trade
         signal_age_min = _minutes_since_iso(signal_at)
-        protection_grace_min = float(os.getenv("LIVE_EXIT_PROTECTION_GRACE_MINUTES", "10"))
+        protection_grace_min = float(os.getenv("LIVE_EXIT_PROTECTION_GRACE_MINUTES", "15"))
 
-        # Salida por SL / BE / piso escalera: la orden en Binance define el fill (~risk_usd).
-        # TIME_STOP sale por MARKET (no espera STOP en exchange).
         protected_exit = (
             close_reason == "SL"
             or close_reason == "BE"
             or close_reason.startswith("SL_TP")
         )
         if protected_exit:
+            if not protection_mgr.has_verified_protection(trade):
+                rec = protection_mgr.reconcile_protection(binance, trades, trade, force=True)
+                trade = trades.get_trade(tid) or trade
+                if rec.ok:
+                    logger.info(
+                        "live exit protection restored trade_id=%s pair=%s",
+                        tid,
+                        pair,
+                    )
+                    continue
+                if strict_protection:
+                    protection_mgr.maybe_alert_critical(
+                        telegram,
+                        trade,
+                        rec.error or "sin STOP verificado",
+                        minutes_since_iso=_minutes_since_iso,
+                    )
+                    trades.update_trade(
+                        tid, {"protection_alert_sent_at": datetime.now(timezone.utc).isoformat()}
+                    )
+                    continue
+
             if has_exchange_exit_protection(trade):
                 if signal_age_min < protection_grace_min:
                     logger.info(
@@ -300,42 +340,27 @@ def handler(event, context):
                         signal_age_min,
                     )
                     continue
-                logger.warning(
-                    "live exit stale protection trade_id=%s pair=%s reason=%s age=%.1fm; "
-                    "fallback MARKET",
-                    tid,
-                    pair,
-                    close_reason,
-                    signal_age_min,
-                )
-            floor_px = float(
-                trade.get("active_stop_price")
-                if (close_reason.startswith("SL_TP") or close_reason == "BE")
-                else trade.get("sl_price")
-                or price
-            )
-            if floor_px > 0:
-                ok_stop, err_stop = sync_ladder_stop_on_exchange(
-                    binance,
-                    trades,
-                    trade,
-                    int(trade.get("ladder_level") or 0),
-                    floor_px,
-                )
-                if ok_stop:
-                    logger.info(
-                        "live exit placed STOP trade_id=%s pair=%s @ %.6f",
-                        tid,
-                        pair,
-                        floor_px,
+                if strict_protection:
+                    protection_mgr.maybe_alert_stale_protected_exit(
+                        telegram, trade, close_reason, signal_age_min
                     )
                     continue
                 logger.warning(
-                    "live exit STOP failed trade_id=%s: %s; fallback MARKET",
+                    "live exit stale protection trade_id=%s (non-strict MARKET disabled path)",
                     tid,
-                    err_stop,
                 )
+                continue
 
+        if protected_exit and strict_protection:
+            protection_mgr.maybe_alert_critical(
+                telegram,
+                trade,
+                "protected exit sin paridad exchange",
+                minutes_since_iso=_minutes_since_iso,
+            )
+            continue
+
+        # TIME_STOP y salidas no protegidas: MARKET permitido.
         exit_px = float(price)
         if close_reason.startswith("SL_TP") or close_reason in ("TRAILING_SL", "BE"):
             floor_px = float(

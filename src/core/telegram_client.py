@@ -181,3 +181,40 @@ class TelegramClient:
             "  Espera que cierren posiciones abiertas."
         )
         self._send(text)
+
+    def send_protection_synced(
+        self,
+        pair: str,
+        level: str,
+        stop_price: float,
+        order_id: str,
+    ) -> None:
+        self._send(
+            f"📍 Escalera {level} ({pair})\n"
+            f"STOP Binance confirmado @ {stop_price:.4f} (orderId {order_id})\n"
+            f"Orden anterior cancelada ✓"
+        )
+
+    def send_protection_critical(
+        self,
+        pair: str,
+        trade_id_short: str,
+        level: str,
+        stop_price: float,
+        retries: int,
+        error: str,
+    ) -> None:
+        self._send(
+            f"🚨 PROTECCIÓN EXCHANGE FALLIDA\n"
+            f"Par: {pair} | trade: {trade_id_short}…\n"
+            f"Objetivo: {level} STOP @ {stop_price:.4f}\n"
+            f"Estado: failed tras {retries} reintentos\n"
+            f"Error: {error[:200]}\n"
+            f"Posición SIN STOP verificado — NO se hará MARKET en escalera.\n"
+            f"Revisar Binance manualmente."
+        )
+
+    def send_protection_recovered(self, pair: str, level: str, stop_price: float, attempt: int) -> None:
+        self._send(
+            f"⚠️ Protección recuperada: {pair} {level} @ {stop_price:.4f} (reintento #{attempt})"
+        )

@@ -370,6 +370,29 @@ class BinanceClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_open_orders(self, pair: str) -> list[dict[str, Any]]:
+        params = self._sign_params({"symbol": pair})
+        resp = requests.get(
+            f"{self.base_url}/api/v3/openOrders",
+            headers=self._signed_headers(),
+            params=params,
+            timeout=max(self._timeout, 10.0),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+    def get_order(self, pair: str, order_id: int) -> dict[str, Any]:
+        params = self._sign_params({"symbol": pair, "orderId": int(order_id)})
+        resp = requests.get(
+            f"{self.base_url}/api/v3/order",
+            headers=self._signed_headers(),
+            params=params,
+            timeout=max(self._timeout, 10.0),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def get_spot_balance(self, asset: str = "USDT") -> dict[str, float]:
         params = self._sign_params({"recvWindow": 5000})
         resp = requests.get(

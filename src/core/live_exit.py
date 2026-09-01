@@ -6,7 +6,6 @@ from src.core.binance_client import (
     BinanceClient,
     exit_order_client_id,
     oco_list_client_id,
-    stop_order_client_id,
 )
 from src.core.tp_ladder import tp_max_price
 from src.core.trades_manager import TradesManager
@@ -23,14 +22,10 @@ def _oco_active(trade: dict) -> bool:
 
 
 def has_exchange_exit_protection(trade: dict) -> bool:
-    """OCO o STOP en Binance deben ejecutar la salida; el monitor no hace MARKET encima."""
-    if _oco_active(trade):
-        return True
-    stop_oid = trade.get("binance_stop_order_id")
-    if stop_oid is None:
-        return False
-    s = str(stop_oid).strip()
-    return bool(s) and s not in ("0", "None")
+    """STOP/OCO verificado en exchange (paridad synced)."""
+    from src.core.exchange_protection import get_protection_manager
+
+    return get_protection_manager().has_verified_protection(trade)
 
 
 def _cancel_exchange_protections(binance: BinanceClient, trade: dict, pair: str) -> None:
@@ -109,41 +104,14 @@ def sync_ladder_stop_on_exchange(
     ladder_level: int,
     stop_price: float,
 ) -> tuple[bool, str]:
-    """Tras subir escalera: cancela OCO/stop previo y coloca STOP en active_stop."""
-    tid = str(trade.get("trade_id", ""))
-    pair = str(trade.get("pair", ""))
-    qty = float(trade.get("base_qty") or 0)
-    if qty <= 0:
-        ep = float(trade.get("entry_price") or 0)
-        ps = float(trade.get("position_size_usd") or 0)
-        qty = ps / max(ep, 1e-9)
-    try:
-        _cancel_exchange_protections(binance, trade, pair)
-        tick = binance.tick_size(pair)
-        sl_lim = binance.round_price_to_tick(
-            pair, max(stop_price - tick * 2, stop_price * 0.9999), "down"
-        )
-        order = binance.place_stop_loss_sell(
-            pair,
-            qty,
-            stop_price,
-            sl_lim,
-            stop_order_client_id(tid, ladder_level),
-        )
-        trades.update_trade(
-            tid,
-            {
-                "binance_oco_order_list_id": "",
-                "binance_oco_limit_order_id": "",
-                "binance_oco_stop_order_id": "",
-                "binance_stop_order_id": str(order.get("orderId", "")),
-                "active_stop_price": stop_price,
-                "ladder_level": ladder_level,
-            },
-        )
-        return True, ""
-    except Exception as e:
-        return False, str(e)
+    """Tras subir escalera: cancel/replace/verify STOP en Binance."""
+    from src.core.exchange_protection import get_protection_manager
+
+    trade_view = dict(trade)
+    trade_view["ladder_level"] = ladder_level
+    trade_view["active_stop_price"] = stop_price
+    result = get_protection_manager().reconcile_protection(binance, trades, trade_view)
+    return result.ok, result.error
 
 
 def avg_exit_from_sell_order(order: dict) -> float:
